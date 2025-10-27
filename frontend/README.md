@@ -4,7 +4,7 @@ A lightweight Vite + React dashboard for exercising the Gemma 3 text generation,
 
 ## Prerequisites
 - Node.js 18+
-- The FastAPI backend from `gemma-3-api/` running locally or accessible via HTTPS
+- The FastAPI backend from `backend/` running locally or accessible via HTTPS
 - Optional: Docker (for containerized builds)
 
 ## Getting started
@@ -27,7 +27,7 @@ The settings drawer within the UI lets you override the API base URL and API key
 ## Deploying the static bundle
 1. Build the project: `npm run build`.
 2. Upload the contents of `frontend/dist` to any static host (Netlify, Vercel, S3, Cloudflare Pages, etc.).
-3. Alternatively, mount the build into the FastAPI app by serving `dist` via `StaticFiles`. Add the following snippet to `gemma-3-api/app/main.py` if you want the backend to serve the SPA:
+3. Alternatively, mount the build into the FastAPI app by serving `dist` via `StaticFiles`. Add the following snippet to `backend/app/main.py` if you want the backend to serve the SPA:
    ```python
    from fastapi.staticfiles import StaticFiles
    app.mount("/playground", StaticFiles(directory="../frontend/dist", html=True), name="playground")

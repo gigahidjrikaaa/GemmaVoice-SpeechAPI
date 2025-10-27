@@ -17,16 +17,18 @@ ENV PATH="/opt/venv/bin:$PATH"
 # Upgrade pip
 RUN pip install --no-cache-dir --upgrade pip
 
-# Check for pre-built wheels
-RUN pip index versions llama-cpp-python --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu124/
+# Install llama-cpp-python with prebuilt CUDA wheel (much faster than building from source)
+RUN pip install --no-cache-dir llama-cpp-python \
+    --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu124
 
-# Set environment variables to compile llama-cpp-python with CUDA support.
-ENV CMAKE_ARGS="-DGGML_CUDA=on"
-ENV FORCE_CMAKE=1
-
-# Install dependencies from requirements.txt
+# Install dependencies from requirements.txt (excluding llama-cpp-python since we already installed it)
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN grep -v "llama-cpp-python" requirements.txt > requirements_filtered.txt && \
+    pip install --no-cache-dir -r requirements_filtered.txt
+
+# Install CUDA libraries for Faster-Whisper GPU acceleration
+# These are required for CTranslate2 to use GPU inference
+RUN pip install --no-cache-dir nvidia-cublas-cu12 nvidia-cudnn-cu12==9.*
 
 # ==================================================================
 # Stage 2: Final Runtime Stage
@@ -35,9 +37,10 @@ FROM nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Install runtime audio dependencies and curl for health checks
+# Install Python runtime and audio dependencies
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
+    python3.11 python3.11-venv \
     ffmpeg libsndfile1 curl && \
     rm -rf /var/lib/apt/lists/*
 
@@ -45,20 +48,23 @@ RUN apt-get update && \
 ARG UID=1000
 ARG GID=1000
 RUN groupadd -g $GID appuser && useradd --create-home --no-log-init -u $UID -g $GID appuser
-WORKDIR /home/appuser/app
+WORKDIR /home/appuser
 
 # Copy the virtual environment from the builder stage
 COPY --from=builder /opt/venv /opt/venv
 
-# Copy application code
-COPY --chown=appuser:appuser ./app .
+# Copy application code (keep the 'app' directory structure)
+COPY --chown=appuser:appuser ./app ./app
 
 USER appuser
 
 # Set the PATH to use the Python from our virtual environment
 ENV PATH="/opt/venv/bin:$PATH"
 
+# Set LD_LIBRARY_PATH for CUDA libraries (required by CTranslate2)
+ENV LD_LIBRARY_PATH="/opt/venv/lib/python3.11/site-packages/nvidia/cublas/lib:/opt/venv/lib/python3.11/site-packages/nvidia/cudnn/lib:${LD_LIBRARY_PATH}"
+
 EXPOSE 6666
 
-# Command to run your application
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "6666"]
+# Command to run your application (app.main:app refers to app/main.py)
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "6666"]

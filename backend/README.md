@@ -25,7 +25,7 @@ The Docker images install FFmpeg and libsndfile to support Whisper audio process
 ## Installing Python dependencies
 
 ```bash
-cd gemma-3-api
+cd backend
 python -m venv .venv
 source .venv/bin/activate
 pip install --upgrade pip
@@ -83,7 +83,7 @@ The API expects the `/v1/tts` route exposed by the upstream server. Streaming sy
 Build and launch the service:
 
 ```bash
-cd gemma-3-api
+cd backend
 docker compose up --build
 ```
 

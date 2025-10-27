@@ -4,14 +4,18 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import tempfile
 import time
 from dataclasses import dataclass
-from pathlib import Path
+from io import BytesIO
 from typing import Any, Dict, List, Optional
 
 from app.config.settings import Settings
 from app.observability.metrics import record_external_call
+
+try:  # pragma: no cover - optional dependency
+    from faster_whisper import WhisperModel
+except ImportError:  # pragma: no cover - handled gracefully at runtime
+    WhisperModel = None  # type: ignore[assignment]
 
 try:  # pragma: no cover - optional dependency
     from openai import AsyncOpenAI
@@ -42,18 +46,10 @@ class WhisperTranscription:
     segments: List[WhisperTranscriptionSegment]
 
     @classmethod
-    def from_dict(cls, payload: Dict[str, Any]) -> "WhisperTranscription":
-        segments_data = payload.get("segments") or []
-        segments = [
-            WhisperTranscriptionSegment(
-                id=segment.get("id"),
-                start=segment.get("start"),
-                end=segment.get("end"),
-                text=segment.get("text", ""),
-            )
-            for segment in segments_data
-        ]
-        return cls(text=payload.get("text", ""), language=payload.get("language"), segments=segments)
+    def from_segments(cls, segments: list, language: Optional[str]) -> "WhisperTranscription":
+        """Create a transcription from a list of segments."""
+        text = "".join(segment.text for segment in segments)
+        return cls(text=text, language=language, segments=segments)
 
 
 class WhisperService:
@@ -68,8 +64,8 @@ class WhisperService:
     async def startup(self) -> None:
         """Initialise the configured Whisper backend."""
 
-        if self._settings.enable_local_whisper:
-            await self._load_local_model()
+        if self._settings.enable_faster_whisper:
+            await self._load_faster_whisper_model()
             return
 
         if self._settings.openai_api_key is None:
@@ -112,19 +108,19 @@ class WhisperService:
     ) -> WhisperTranscription:
         """Transcribe the provided audio payload."""
 
-        if self._settings.enable_local_whisper:
+        if self._settings.enable_faster_whisper:
             start = time.perf_counter()
             try:
-                result = await self._transcribe_locally(
+                result = await self._transcribe_with_faster_whisper(
                     audio_bytes,
                     language=language,
                     prompt=prompt,
                     temperature=temperature,
                 )
             except Exception:
-                record_external_call("whisper_local", time.perf_counter() - start, success=False)
+                record_external_call("faster_whisper_local", time.perf_counter() - start, success=False)
                 raise
-            record_external_call("whisper_local", time.perf_counter() - start, success=True)
+            record_external_call("faster_whisper_local", time.perf_counter() - start, success=True)
             return result
 
         if self._client is None:
@@ -155,26 +151,43 @@ class WhisperService:
 
         payload = response if isinstance(response, dict) else response.model_dump()
         record_external_call("whisper_remote", time.perf_counter() - start, success=True)
-        return WhisperTranscription.from_dict(payload)
+        segments = [
+            WhisperTranscriptionSegment(
+                id=segment.get("id"),
+                start=segment.get("start"),
+                end=segment.get("end"),
+                text=segment.get("text", ""),
+            )
+            for segment in payload.get("segments", [])
+        ]
+        return WhisperTranscription.from_segments(segments, payload.get("language"))
 
-    async def _load_local_model(self) -> None:
-        """Load Whisper locally in a background thread."""
+    async def _load_faster_whisper_model(self) -> None:
+        """Load Faster Whisper locally in a background thread."""
 
-        try:
-            import whisper  # type: ignore
-        except ImportError as exc:  # pragma: no cover - optional dependency
+        if WhisperModel is None:
             raise RuntimeError(
-                "Local Whisper inference requested but the 'whisper' package is not installed."
-            ) from exc
+                "Local Faster Whisper inference requested but the 'faster-whisper' package is not installed."
+            )
 
-        model_name = self._settings.local_whisper_model
+        model_size = self._settings.faster_whisper_model_size
+        device = self._settings.faster_whisper_device
+        compute_type = self._settings.faster_whisper_compute_type
+
         async with self._local_model_lock:
             if self._local_model is not None:
                 return
-            logger.info("Loading local Whisper model '%s'", model_name)
-            self._local_model = await asyncio.to_thread(whisper.load_model, model_name)
+            logger.info(
+                "Loading local Faster Whisper model '%s' on device '%s' with compute type '%s'",
+                model_size,
+                device,
+                compute_type,
+            )
+            self._local_model = await asyncio.to_thread(
+                WhisperModel, model_size, device=device, compute_type=compute_type
+            )
 
-    async def _transcribe_locally(
+    async def _transcribe_with_faster_whisper(
         self,
         audio_bytes: bytes,
         *,
@@ -182,33 +195,36 @@ class WhisperService:
         prompt: Optional[str],
         temperature: Optional[float],
     ) -> WhisperTranscription:
-        """Run the locally loaded Whisper model against the audio payload."""
+        """Run the locally loaded Faster Whisper model against the audio payload."""
 
         if self._local_model is None:
-            await self._load_local_model()
+            await self._load_faster_whisper_model()
 
         assert self._local_model is not None  # for type-checkers
 
-        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp_file:
-            tmp_file.write(audio_bytes)
-            tmp_path = Path(tmp_file.name)
+        kwargs: Dict[str, Any] = {}
+        if language:
+            kwargs["language"] = language
+        if prompt:
+            kwargs["initial_prompt"] = prompt
+        if temperature is not None:
+            kwargs["temperature"] = temperature
 
-        try:
-            kwargs: Dict[str, Any] = {}
-            if language:
-                kwargs["language"] = language
-            if prompt:
-                kwargs["prompt"] = prompt
-            if temperature is not None:
-                kwargs["temperature"] = temperature
+        model_name = self._settings.faster_whisper_model_size
+        logger.debug("Dispatching Faster Whisper transcription locally: model=%s", model_name)
 
-            model_name = getattr(self._local_model, "model_name", "local-whisper")
-            logger.debug("Dispatching Whisper transcription locally: model=%s", model_name)
-            result: Dict[str, Any] = await asyncio.to_thread(self._local_model.transcribe, str(tmp_path), **kwargs)
-        finally:
-            try:
-                tmp_path.unlink(missing_ok=True)
-            except OSError:  # pragma: no cover - best effort cleanup
-                logger.warning("Failed to remove temporary audio file at %s", tmp_path)
+        segments_generator, info = await asyncio.to_thread(
+            self._local_model.transcribe, BytesIO(audio_bytes), **kwargs
+        )
+        
+        segments = [
+            WhisperTranscriptionSegment(
+                id=segment.id,
+                start=segment.start,
+                end=segment.end,
+                text=segment.text,
+            )
+for segment in segments_generator
+        ]
 
-        return WhisperTranscription.from_dict(result)
+        return WhisperTranscription.from_segments(segments, info.language)

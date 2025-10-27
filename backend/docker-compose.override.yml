@@ -1,0 +1,19 @@
+# This file provides GPU-optional configuration
+# Docker Compose automatically merges this with docker-compose.yml
+# If GPU is not available, containers will fall back to CPU mode
+
+version: '3.8'
+
+services:
+  gemma_service:
+    # Remove GPU requirements from deployment
+    # Let the application decide based on environment variables
+    deploy:
+      resources:
+        reservations: {}
+    
+  openaudio:
+    # Remove GPU requirements from deployment
+    deploy:
+      resources:
+        reservations: {}

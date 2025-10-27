@@ -177,15 +177,25 @@ class Settings(BaseSettings):
         alias="DEFAULT_AUDIO_SAMPLE_RATE",
         description="Default PCM sample rate expected by the speech pipeline.",
     )
-    enable_local_whisper: bool = Field(
+    enable_faster_whisper: bool = Field(
         default=False,
-        alias="ENABLE_LOCAL_WHISPER",
-        description="Feature flag toggling local Whisper inference vs hosted APIs.",
+        alias="ENABLE_FASTER_WHISPER",
+        description="Feature flag toggling local Faster Whisper inference vs hosted APIs.",
     )
-    local_whisper_model: str = Field(
+    faster_whisper_model_size: str = Field(
         default="base",
-        alias="LOCAL_WHISPER_MODEL",
-        description="Model identifier used when running Whisper locally (e.g. tiny, base, large-v3).",
+        alias="FASTER_WHISPER_MODEL_SIZE",
+        description="Model size used when running Faster Whisper locally (e.g. tiny, base, large-v3).",
+    )
+    faster_whisper_device: str = Field(
+        default="cpu",
+        alias="FASTER_WHISPER_DEVICE",
+        description="Device to use for Faster Whisper inference (e.g. cpu, cuda).",
+    )
+    faster_whisper_compute_type: str = Field(
+        default="int8",
+        alias="FASTER_WHISPER_COMPUTE_TYPE",
+        description="Compute type for Faster Whisper inference (e.g. int8, float16, float32).",
     )
 
     @field_validator("api_keys", mode="before")

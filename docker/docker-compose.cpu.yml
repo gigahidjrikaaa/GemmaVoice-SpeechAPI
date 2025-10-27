@@ -1,0 +1,67 @@
+version: '3.8'
+
+services:
+  gemma_service:
+    build:
+      context: ../backend
+      dockerfile: ../docker/Dockerfile
+    image: gemma-voice-api
+    container_name: gemma_service
+    restart: always
+    # NO GPU configuration for CPU-only mode
+    volumes:
+      - ~/.cache/huggingface:/home/appuser/.cache/huggingface
+      - ~/.cache/whisper:/home/appuser/.cache/whisper
+    environment:
+      - HUGGING_FACE_HUB_TOKEN=${HUGGING_FACE_HUB_TOKEN:-}
+      - ENABLE_FASTER_WHISPER=${ENABLE_FASTER_WHISPER:-true}
+      - FASTER_WHISPER_MODEL_SIZE=${FASTER_WHISPER_MODEL_SIZE:-base}
+      - FASTER_WHISPER_DEVICE=${FASTER_WHISPER_DEVICE:-cpu}  # CPU mode
+      - FASTER_WHISPER_COMPUTE_TYPE=${FASTER_WHISPER_COMPUTE_TYPE:-int8}  # Optimized for CPU
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - REQUEST_ID_HEADER=${REQUEST_ID_HEADER:-X-Request-ID}
+      - API_KEY_ENABLED=${API_KEY_ENABLED:-false}
+      - API_KEY_HEADER_NAME=${API_KEY_HEADER_NAME:-X-API-Key}
+      - API_KEYS=${API_KEYS:-}
+      - RATE_LIMIT_ENABLED=${RATE_LIMIT_ENABLED:-false}
+      - RATE_LIMIT_REQUESTS=${RATE_LIMIT_REQUESTS:-120}
+      - RATE_LIMIT_WINDOW_SECONDS=${RATE_LIMIT_WINDOW_SECONDS:-60}
+      - RATE_LIMIT_BURST_MULTIPLIER=${RATE_LIMIT_BURST_MULTIPLIER:-1.0}
+      - OPENAUDIO_API_KEY=${OPENAUDIO_API_KEY:-}
+      - OPENAUDIO_API_BASE=${OPENAUDIO_API_BASE:-http://openaudio:8080}
+      - OPENAUDIO_TTS_PATH=${OPENAUDIO_TTS_PATH:-/v1/tts}
+      - OPENAUDIO_DEFAULT_FORMAT=${OPENAUDIO_DEFAULT_FORMAT:-wav}
+      - OPENAUDIO_DEFAULT_REFERENCE_ID=${OPENAUDIO_DEFAULT_REFERENCE_ID:-}
+      - OPENAUDIO_DEFAULT_NORMALIZE=${OPENAUDIO_DEFAULT_NORMALIZE:-true}
+      - OPENAUDIO_TIMEOUT_SECONDS=${OPENAUDIO_TIMEOUT_SECONDS:-120}
+      - OPENAUDIO_MAX_RETRIES=${OPENAUDIO_MAX_RETRIES:-3}
+    ports:
+      - "6666:6666"
+    networks:
+      - shared_services_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:6666/health"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+
+  openaudio:
+    build:
+      context: ../backend
+      dockerfile: ../docker/openaudio.Dockerfile
+      args:
+        REPO_URL: ${REPO_URL}
+    container_name: openaudio
+    restart: unless-stopped
+    # NO GPU configuration for CPU-only mode
+    environment:
+      - MODEL_NAME=OpenAudio-S1-mini
+      - DEVICE=cpu  # Force CPU mode
+    networks:
+      - shared_services_network
+    ports:
+      - "8080:8080"
+
+networks:
+  shared_services_network:
+    external: true

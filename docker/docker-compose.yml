@@ -2,8 +2,10 @@ version: '3.8'
 
 services:
   gemma_service:
-    build: .
-    image: gemma-3-api
+    build:
+      context: ../backend
+      dockerfile: ../docker/Dockerfile
+    image: gemma-voice-api
     container_name: gemma_service
     restart: always
     deploy:
@@ -15,15 +17,13 @@ services:
               capabilities: [gpu]
     volumes:
       - ~/.cache/huggingface:/home/appuser/.cache/huggingface
+      - ~/.cache/whisper:/home/appuser/.cache/whisper
     environment:
       - HUGGING_FACE_HUB_TOKEN=${HUGGING_FACE_HUB_TOKEN:-}
-      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
-      - OPENAI_API_BASE=${OPENAI_API_BASE:-}
-      - OPENAI_TIMEOUT_SECONDS=${OPENAI_TIMEOUT_SECONDS:-60}
-      - OPENAI_WHISPER_MODEL=${OPENAI_WHISPER_MODEL:-gpt-4o-mini-transcribe}
-      - OPENAI_WHISPER_RESPONSE_FORMAT=${OPENAI_WHISPER_RESPONSE_FORMAT:-verbose_json}
-      - ENABLE_LOCAL_WHISPER=${ENABLE_LOCAL_WHISPER:-false}
-      - LOCAL_WHISPER_MODEL=${LOCAL_WHISPER_MODEL:-base}
+      - ENABLE_FASTER_WHISPER=${ENABLE_FASTER_WHISPER:-true}
+      - FASTER_WHISPER_MODEL_SIZE=${FASTER_WHISPER_MODEL_SIZE:-base}
+      - FASTER_WHISPER_DEVICE=${FASTER_WHISPER_DEVICE:-cuda}
+      - FASTER_WHISPER_COMPUTE_TYPE=${FASTER_WHISPER_COMPUTE_TYPE:-float16}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - REQUEST_ID_HEADER=${REQUEST_ID_HEADER:-X-Request-ID}
       - API_KEY_ENABLED=${API_KEY_ENABLED:-false}
@@ -54,7 +54,11 @@ services:
       retries: 5
 
   openaudio:
-    image: fishaudio/fish-speech:latest-server-cuda
+    build:
+      context: ../backend
+      dockerfile: ../docker/openaudio.Dockerfile
+      args:
+        REPO_URL: ${REPO_URL}
     container_name: openaudio
     restart: unless-stopped
     deploy:
@@ -66,21 +70,6 @@ services:
               capabilities: [gpu]
     environment:
       - MODEL_NAME=OpenAudio-S1-mini
-    command:
-      [
-        "python",
-        "-m",
-        "tools.api_server",
-        "--host",
-        "0.0.0.0",
-        "--port",
-        "8080",
-        "--model",
-        "OpenAudio-S1-mini",
-        "--compile",
-      ]
-    volumes:
-      - ./openaudio-checkpoints:/workspace/checkpoints
     networks:
       - shared_services_network
     ports:

@@ -1,0 +1,60 @@
+version: '3.8'
+
+# ============================================================================
+# Testing Docker Compose Configuration
+# ============================================================================
+# This file is used for integration tests in CI/CD.
+# It runs services with test-specific configurations.
+# ============================================================================
+
+services:
+  gemma_service_test:
+    build:
+      context: ../backend
+      dockerfile: ../docker/Dockerfile
+    container_name: gemma_service_test
+    environment:
+      # Testing mode
+      - TESTING=true
+      - LOG_LEVEL=DEBUG
+      
+      # Mock external services
+      - ENABLE_FASTER_WHISPER=false  # Mock in tests
+      - OPENAUDIO_API_BASE=http://openaudio_mock:8080
+      
+      # Security (disabled for tests)
+      - API_KEY_ENABLED=false
+      - RATE_LIMIT_ENABLED=false
+      
+      # Test database/cache
+      - HUGGING_FACE_HUB_TOKEN=${HUGGING_FACE_HUB_TOKEN:-}
+    
+    ports:
+      - "6666:6666"
+    
+    networks:
+      - test_network
+    
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:6666/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+  # Mock OpenAudio service for testing
+  openaudio_mock:
+    image: mockserver/mockserver:latest
+    container_name: openaudio_mock
+    environment:
+      - MOCKSERVER_INITIALIZATION_JSON_PATH=/config/mock-config.json
+    ports:
+      - "8080:1080"
+    networks:
+      - test_network
+    volumes:
+      - ./tests/mock-config.json:/config/mock-config.json
+
+networks:
+  test_network:
+    driver: bridge

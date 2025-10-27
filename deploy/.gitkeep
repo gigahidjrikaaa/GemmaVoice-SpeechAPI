@@ -1,0 +1,75 @@
+# Deployment Directory
+
+This directory contains scripts and configurations for deploying GemmaVoice-SpeechAPI to production.
+
+## 📁 Contents
+
+- **`deploy.sh`** - Main deployment script with health checks and rollback support
+- **`README.md`** - Complete CI/CD setup guide
+
+## 🚀 Quick Start
+
+### On Your VM
+
+```bash
+# Copy deployment script to your VM
+scp deploy.sh user@vm:/opt/gemmavoice/
+
+# Make executable
+ssh user@vm "chmod +x /opt/gemmavoice/deploy.sh"
+
+# Deploy
+ssh user@vm "cd /opt/gemmavoice && ./deploy.sh deploy"
+```
+
+### Locally (via GitHub Actions)
+
+1. Configure GitHub secrets (see `README.md`)
+2. Push to `main` or `develop` branch
+3. CI/CD will automatically deploy
+
+## 📖 Documentation
+
+See `README.md` in this directory for:
+- Complete CI/CD setup guide
+- VM configuration
+- GitHub Actions configuration
+- Troubleshooting
+
+## 🔧 Deployment Script Usage
+
+```bash
+./deploy.sh deploy     # Deploy latest version
+./deploy.sh rollback   # Rollback to previous version
+./deploy.sh status     # Show service status
+./deploy.sh logs       # Stream logs
+```
+
+## 🛡️ Security Notes
+
+- Never commit `.env.production` files
+- Use strong API keys (32+ characters)
+- Restrict SSH access to CI/CD IP ranges
+- Enable rate limiting in production
+- Use HTTPS/SSL for all endpoints
+
+## 📝 Maintenance
+
+### Update Images
+
+```bash
+docker compose pull
+docker compose up -d
+```
+
+### View Logs
+
+```bash
+docker compose logs -f
+```
+
+### Clean Up
+
+```bash
+docker system prune -f
+```

@@ -1,8 +1,33 @@
-# DevOps Guide: Gemma 3 API Service
+# GemmaVoice Speech API
 
-**Last Updated:** June 17, 2025
+**Fully local GPU-accelerated speech API with Gemma 3, Faster-Whisper, and OpenAudio-S1-mini**
 
-This document provides all the necessary commands and operational procedures for building, deploying, managing, and testing the `gemma-3-api` service. It is intended for developers and system administrators responsible for the service's lifecycle on the `aiserv` host machine.
+[![CI/CD](https://github.com/gigahidjrikaaa/GemmaVoice-SpeechAPI/actions/workflows/backend-ci-cd.yml/badge.svg)](https://github.com/gigahidjrikaaa/GemmaVoice-SpeechAPI/actions)
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
+Complete speech pipeline combining:
+- 🤖 **LLM**: Gemma 3 12B (via llama-cpp-python)
+- 🎤 **STT**: Faster-Whisper (CTranslate2 with GPU)
+- 🔊 **TTS**: OpenAudio-S1-mini (Fish-speech)
+
+---
+
+## 📚 Documentation
+
+### Quick Start
+- **[Local Setup Guide](LOCAL_SETUP_GUIDE.md)** - Complete development setup (Docker, GPU, models)
+- **[GPU Configuration](backend/GPU_SETUP.md)** - Windows/WSL GPU setup and CPU fallback
+
+### Features & Usage
+- **[Voice Cloning Guide](backend/VOICE_CLONING_GUIDE.md)** - Custom voice references for Bahasa Indonesia
+- **[API Reference](docs/scalar/openapi.yaml)** - Interactive OpenAPI 3.1 documentation
+- **[Frontend Playground](frontend/)** - React testing UI with all endpoints
+
+### Production & Operations
+- **[CI/CD Setup](deploy/README.md)** - Complete production deployment with GitHub Actions
+- **[CI/CD Review](.github/CI_CD_REVIEW.md)** - Security audit and best practices assessment
+- **[Security & Monitoring](SECURITY_MONITORING_GUIDE.md)** - Prometheus, Grafana, vulnerability scanning
+- **[Deployment Summary](CI_CD_SETUP_SUMMARY.md)** - Quick reference for DevOps team
 
 ---
 
@@ -52,16 +77,16 @@ The team is extending the text-only Gemma 3 API into a speech-capable platform p
 ### Phase 1 — Application scaffolding
 
 1. **Service decomposition**
-   - Refactor `gemma-3-api/app/main.py` into a modular layout (`app/services`, `app/api`, `app/config`) so the speech services can share FastAPI lifespan hooks with the current LLM loader without repeated initialization.
+   - Refactor `backend/app/main.py` into a modular layout (`app/services`, `app/api`, `app/config`) so the speech services can share FastAPI lifespan hooks with the current LLM loader without repeated initialization.
    - Define Pydantic models for audio payloads (binary uploads, base64 JSON envelopes, and WebSocket frames) plus transcript/voice settings.
 2. **Configuration and secrets**
    - Introduce `pydantic-settings` for managing OpenAI API keys, OpenAudio authentication (token, Hugging Face access if running local checkpoints), default sample rates, and feature flags.
    - Add schema validation for environment variables so misconfigured GPU IDs, missing checkpoints, or absent API keys fail fast at startup.
 
-### Phase 2 — STT integration with Whisper
+### Phase 2 — STT integration with Faster Whisper
 
 1. **Local inference path**
-   - Package Whisper as a callable service that loads the desired model tier (`base`, `large-v3`, or the faster `tiny.en`) once during lifespan startup, exposing async helpers that offload CPU-heavy work with `asyncio.to_thread` to retain non-blocking FastAPI handlers.
+   - Package Faster Whisper as a callable service that loads the desired model tier (`base`, `large-v3`, or the faster `tiny.en`) once during lifespan startup, exposing async helpers that offload CPU-heavy work with `asyncio.to_thread` to retain non-blocking FastAPI handlers.
    - Provide preprocessing utilities that normalize audio to 16 kHz mono PCM using `soundfile`/`torchaudio`, mirroring Whisper’s reference scripts for compatibility.
    - Support both file uploads and streaming (chunk assembly plus VAD-driven segmentation) so we can reuse the service for REST and WebSocket routes.
 2. **Managed API fallback**
@@ -112,8 +137,10 @@ Set the following environment variables (or update `.env`) to enable the integra
 | `OPENAI_API_BASE` | Optional override for the OpenAI endpoint (proxies/self-hosted gateways). |
 | `OPENAI_WHISPER_MODEL` | Whisper-compatible model to invoke, defaults to `gpt-4o-mini-transcribe`. |
 | `OPENAI_WHISPER_RESPONSE_FORMAT` | Response format (e.g. `verbose_json`, `json`, `srt`). |
-| `ENABLE_LOCAL_WHISPER` | Set to `true` to run the open-source Whisper locally; ensure `pip install -U openai-whisper` and FFmpeg are available. |
-| `LOCAL_WHISPER_MODEL` | Model tier used when local inference is enabled (e.g. `large-v3`). |
+| `ENABLE_FASTER_WHISPER` | Set to `true` to run the open-source Faster Whisper locally; ensure `pip install -U faster-whisper` is included in requirements. |
+| `FASTER_WHISPER_MODEL_SIZE` | Model size used when running Faster Whisper locally (e.g. `tiny`, `base`, `large-v3`). |
+| `FASTER_WHISPER_DEVICE` | Device to use for Faster Whisper inference (e.g. `cpu`, `cuda`). |
+| `FASTER_WHISPER_COMPUTE_TYPE` | Compute type for Faster Whisper inference (e.g. `int8`, `float16`, `float32`). |
 | `OPENAUDIO_API_BASE` | Base URL for the OpenAudio deployment (defaults to `http://localhost:8080`). |
 | `OPENAUDIO_API_KEY` | Bearer token forwarded to OpenAudio when authentication is required. |
 | `OPENAUDIO_TTS_PATH` | Path to the OpenAudio synthesis endpoint (defaults to `/v1/tts`). |
@@ -161,7 +188,7 @@ Set the following environment variables (or update `.env`) to enable the integra
 
 ### Service lifecycle
 
-- `app.services.whisper.WhisperService` lazily loads the requested Whisper backend (remote or local) and exposes a unified transcription interface used by the API router.
+- `app.services.whisper.WhisperService` lazily loads the requested Whisper backend (remote or local `faster-whisper`) and exposes a unified transcription interface used by the API router.
 - `app.services.openaudio.OpenAudioService` manages an `httpx.AsyncClient`, performs retries for transient network issues, and supports both blocking and streaming synthesis flows.
 - Both services are initialised in `app/main.py` alongside the existing Gemma 3 LLM service and are stored on `app.state` for reuse across requests.
 
@@ -218,50 +245,78 @@ This service is designed to run within a Docker container but relies on host-lev
 
 ---
 
-## 2. Building the Docker Image
+## 2. Running with Docker Compose
 
-The entire application, including all dependencies, is packaged into a Docker image named `gemma-3-api`. Before running the service for the first time, or after any changes to the source code (`app/main.py`, `Dockerfile`, `requirements.txt`), you must build (or rebuild) the image.
 
-**Build Command:**
 
-This command must be run from the project's root directory (`~/Gemma-Finetune/gemma-3-api`). It is crucial to pass the current user's ID and group ID as build arguments to prevent file permission errors when mounting the Hugging Face cache.
+**Prerequisite: Install Git LFS**
+
+
+
+This repository uses [Git LFS](https://git-lfs.github.com/) to manage large model files. Before you can run the application, you need to install Git LFS on your system. You can find installation instructions on the [Git LFS website](https://git-lfs.github.com/).
+
+
+
+The entire application stack, including the `backend` service and the `openaudio` TTS service, is managed via Docker Compose. This is the recommended way to run the application for both development and production.
+
+
+
+**A. Download Model Weights**
+
+
+
+Before starting the services, you need to download the OpenAudio-S1-mini model weights from Hugging Face.
+
+
+
+1.  Create a directory for the model weights:
+
+
+
+    ```bash
+
+    mkdir -p backend/openaudio-checkpoints
+
+    ```
+
+
+
+2.  Download the model weights from the [OpenAudio-S1-mini Hugging Face repository](https://huggingface.co/fishaudio/OpenAudio-S1-mini) and place them in the `backend/openaudio-checkpoints` directory.
+
+
+
+**B. Start the Services**
+
+
+
+From the `docker/` directory, run:
+
+
 
 ```bash
-docker build \
-  --build-arg UID=$(id -u) \
-  --build-arg GID=$(id -g) \
-  -t gemma-3-api .
+
+docker-compose up --build -d
+
 ```
 
-3. Running the Service
-There are two primary ways to run the container: interactively for debugging or detached as a persistent background service for production.
 
-A. Running in Interactive Mode (for Development & Debugging)
-This mode is ideal for testing changes or troubleshooting, as all application logs are printed directly to your terminal. The container is automatically removed when you stop it (Ctrl+C), ensuring a clean state for the next run.
 
-```bash
-docker run --rm -it \
-  --gpus all \
-  -p 6666:6666 \
-  -v ~/.cache/huggingface:/home/appuser/.cache/huggingface \
-  -e HUGGING_FACE_HUB_TOKEN=$(cat ~/.cache/huggingface/token) \
-  --name gemma_service_debug \
-  gemma-3-api
-```
+This command will build the `backend` image, pull the `fishaudio/fish-speech` image, and start both services in detached mode.
 
-B. Running in Production Mode (Background Service)
-This is the standard command for deploying the service. It runs the container in the background and sets a restart policy to ensure it comes back online automatically if it ever crashes or the server reboots.
+
+
+**C. Stop the Services**
+
+
+
+To stop the services, run:
+
+
 
 ```bash
-docker run \
-    -d \
-    --restart always \
-    --gpus all \
-    -p 6666:6666 \
-    -v ~/.cache/huggingface:/home/appuser/.cache/huggingface \
-    -e HUGGING_FACE_HUB_TOKEN=$(cat ~/.cache/huggingface/token) \
-    --name gemma_service \
-    gemma-3-api
+
+docker-compose down
+
 ```
 
 Key Flags:
@@ -340,7 +395,7 @@ To deploy new code or dependency changes, follow this three-step "rebuild and re
 Build the new image version with your changes:
 
 ```bash
-docker build --build-arg UID=$(id -u) --build-arg GID=$(id -g) -t gemma-3-api .
+docker build --build-arg UID=$(id -u) --build-arg GID=$(id -g) -t backend .
 ```
 
 Stop and remove the old running container:
@@ -354,5 +409,5 @@ Start a new container using the freshly built image:
 (Use the production run command from Section 3B)
 
 ```bash
-docker run -d --restart always --gpus all -p 6666:6666 ... gemma-3-api
+docker run -d --restart always --gpus all -p 6666:6666 ... backend
 ```

@@ -1,0 +1,79 @@
+# Prometheus alerting rules for GemmaVoice
+
+groups:
+  - name: gemmavoice_alerts
+    interval: 30s
+    rules:
+      # Service availability alerts
+      - alert: ServiceDown
+        expr: up{job="gemma-api"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          component: backend
+        annotations:
+          summary: "GemmaVoice API is down"
+          description: "The GemmaVoice API has been down for more than 1 minute."
+      
+      - alert: HighErrorRate
+        expr: rate(http_requests_total{status=~"5.."}[5m]) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+          component: backend
+        annotations:
+          summary: "High error rate detected"
+          description: "Error rate is {{ $value | humanizePercentage }} (threshold: 5%)"
+      
+      # Performance alerts
+      - alert: SlowResponseTime
+        expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m])) > 5
+        for: 10m
+        labels:
+          severity: warning
+          component: backend
+        annotations:
+          summary: "Slow API response time"
+          description: "95th percentile response time is {{ $value }}s (threshold: 5s)"
+      
+      - alert: HighMemoryUsage
+        expr: (container_memory_usage_bytes{name="gemma_service"} / container_spec_memory_limit_bytes{name="gemma_service"}) > 0.9
+        for: 5m
+        labels:
+          severity: warning
+          component: backend
+        annotations:
+          summary: "High memory usage"
+          description: "Memory usage is at {{ $value | humanizePercentage }} (threshold: 90%)"
+      
+      - alert: HighCPUUsage
+        expr: rate(container_cpu_usage_seconds_total{name="gemma_service"}[5m]) > 0.8
+        for: 10m
+        labels:
+          severity: warning
+          component: backend
+        annotations:
+          summary: "High CPU usage"
+          description: "CPU usage is at {{ $value | humanizePercentage }} (threshold: 80%)"
+      
+      # Rate limiting alerts
+      - alert: HighRateLimitHitRate
+        expr: rate(rate_limit_exceeded_total[5m]) > 10
+        for: 5m
+        labels:
+          severity: info
+          component: backend
+        annotations:
+          summary: "High rate limit hit rate"
+          description: "Rate limit is being hit {{ $value }} times per second"
+      
+      # GPU alerts (if GPU metrics are exposed)
+      - alert: GPUMemoryHigh
+        expr: (nvidia_gpu_memory_used_bytes / nvidia_gpu_memory_total_bytes) > 0.95
+        for: 5m
+        labels:
+          severity: warning
+          component: gpu
+        annotations:
+          summary: "GPU memory usage high"
+          description: "GPU memory usage is at {{ $value | humanizePercentage }}"

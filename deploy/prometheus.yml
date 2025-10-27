@@ -1,0 +1,65 @@
+# Prometheus configuration for GemmaVoice monitoring
+
+global:
+  scrape_interval: 15s      # Scrape metrics every 15 seconds
+  evaluation_interval: 15s  # Evaluate rules every 15 seconds
+  external_labels:
+    cluster: 'gemmavoice'
+    environment: 'production'
+
+# Alertmanager configuration (optional - configure if you set up alerting)
+# alerting:
+#   alertmanagers:
+#     - static_configs:
+#         - targets:
+#           - alertmanager:9093
+
+# Rule files for alerting
+rule_files:
+  - "/etc/prometheus/alerts.yml"
+
+# Scrape configurations
+scrape_configs:
+  # Scrape Prometheus itself
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+  
+  # Scrape GemmaVoice Backend API
+  - job_name: 'gemma-api'
+    metrics_path: '/metrics'
+    static_configs:
+      - targets: ['gemma_service:6666']
+        labels:
+          service: 'backend'
+          component: 'api'
+    
+    # Scrape every 15 seconds
+    scrape_interval: 15s
+    scrape_timeout: 10s
+  
+  # Scrape OpenAudio Service (if it exposes metrics)
+  - job_name: 'openaudio'
+    static_configs:
+      - targets: ['openaudio:8080']
+        labels:
+          service: 'tts'
+          component: 'openaudio'
+    
+    # Less frequent scraping for TTS service
+    scrape_interval: 30s
+    scrape_timeout: 10s
+  
+  # Scrape Node Exporter (system metrics - install separately)
+  - job_name: 'node'
+    static_configs:
+      - targets: ['node-exporter:9100']
+        labels:
+          component: 'system'
+  
+  # Scrape cAdvisor (container metrics - install separately)
+  - job_name: 'cadvisor'
+    static_configs:
+      - targets: ['cadvisor:8080']
+        labels:
+          component: 'containers'

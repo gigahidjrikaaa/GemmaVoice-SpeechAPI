@@ -1,0 +1,182 @@
+version: '3.8'
+
+# ============================================================================
+# Production Docker Compose Configuration
+# ============================================================================
+# This file is used for production deployments via CI/CD.
+# It references pre-built images from GitHub Container Registry.
+# ============================================================================
+
+services:
+  # ==========================================================================
+  # Backend Service (Gemma API)
+  # ==========================================================================
+  gemma_service:
+    image: ${BACKEND_IMAGE:-ghcr.io/gigahidjrikaaa/gemmavoice-speechapi/gemma-api:latest}
+    container_name: gemma_service
+    restart: unless-stopped
+    
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+        limits:
+          cpus: '8'
+          memory: 16G
+    
+    volumes:
+      - huggingface-cache:/home/appuser/.cache/huggingface
+      - whisper-cache:/home/appuser/.cache/whisper
+      - ./logs/backend:/home/appuser/app/logs
+    
+    environment:
+      # Hugging Face
+      - HUGGING_FACE_HUB_TOKEN=${HUGGING_FACE_HUB_TOKEN}
+      
+      # Faster-Whisper (Speech-to-Text)
+      - ENABLE_FASTER_WHISPER=${ENABLE_FASTER_WHISPER:-true}
+      - FASTER_WHISPER_MODEL_SIZE=${FASTER_WHISPER_MODEL_SIZE:-base}
+      - FASTER_WHISPER_DEVICE=${FASTER_WHISPER_DEVICE:-cuda}
+      - FASTER_WHISPER_COMPUTE_TYPE=${FASTER_WHISPER_COMPUTE_TYPE:-float16}
+      
+      # LLM Configuration
+      - LLM_MODEL_PATH=${LLM_MODEL_PATH}
+      - LLM_GPU_LAYERS=${LLM_GPU_LAYERS:--1}
+      - LLM_CONTEXT_SIZE=${LLM_CONTEXT_SIZE:-32768}
+      - LLM_MAX_TOKENS=${LLM_MAX_TOKENS:-2048}
+      
+      # OpenAudio (Text-to-Speech)
+      - OPENAUDIO_API_BASE=http://openaudio:8080
+      - OPENAUDIO_DEFAULT_FORMAT=${OPENAUDIO_DEFAULT_FORMAT:-wav}
+      - OPENAUDIO_DEFAULT_NORMALIZE=${OPENAUDIO_DEFAULT_NORMALIZE:-true}
+      - OPENAUDIO_TIMEOUT_SECONDS=${OPENAUDIO_TIMEOUT_SECONDS:-120}
+      
+      # Security
+      - API_KEY_ENABLED=${API_KEY_ENABLED:-true}
+      - API_KEY_HEADER_NAME=${API_KEY_HEADER_NAME:-X-API-Key}
+      - API_KEYS=${API_KEYS}
+      
+      # Rate Limiting
+      - RATE_LIMIT_ENABLED=${RATE_LIMIT_ENABLED:-true}
+      - RATE_LIMIT_REQUESTS=${RATE_LIMIT_REQUESTS:-100}
+      - RATE_LIMIT_WINDOW_SECONDS=${RATE_LIMIT_WINDOW_SECONDS:-60}
+      
+      # Observability
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - REQUEST_ID_HEADER=${REQUEST_ID_HEADER:-X-Request-ID}
+      - ENVIRONMENT=${ENVIRONMENT:-production}
+    
+    ports:
+      - "${BACKEND_PORT:-6666}:6666"
+    
+    networks:
+      - gemma_network
+    
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:6666/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ==========================================================================
+  # OpenAudio Service (Text-to-Speech)
+  # ==========================================================================
+  openaudio:
+    image: ${OPENAUDIO_IMAGE:-gemma-voice-openaudio:latest}
+    container_name: openaudio
+    restart: unless-stopped
+    
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+        limits:
+          cpus: '6'
+          memory: 12G
+    
+    environment:
+      - MODEL_NAME=OpenAudio-S1-mini
+      - COMPILE=1
+    
+    networks:
+      - gemma_network
+    
+    ports:
+      - "${OPENAUDIO_PORT:-8080}:8080"
+    
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
+    
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ==========================================================================
+  # Frontend Service (React App)
+  # ==========================================================================
+  frontend:
+    image: ${FRONTEND_IMAGE:-ghcr.io/gigahidjrikaaa/gemmavoice-speechapi/gemma-frontend:latest}
+    container_name: gemma_frontend
+    restart: unless-stopped
+    
+    environment:
+      - VITE_API_BASE_URL=${VITE_API_BASE_URL}
+      - VITE_API_KEY=${VITE_API_KEY}
+    
+    ports:
+      - "${FRONTEND_PORT:-5173}:80"
+    
+    networks:
+      - gemma_network
+    
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "3"
+    
+    depends_on:
+      gemma_service:
+        condition: service_healthy
+
+# ============================================================================
+# Networks
+# ============================================================================
+networks:
+  gemma_network:
+    driver: bridge
+
+# ============================================================================
+# Volumes
+# ============================================================================
+volumes:
+  huggingface-cache:
+    driver: local
+  whisper-cache:
+    driver: local

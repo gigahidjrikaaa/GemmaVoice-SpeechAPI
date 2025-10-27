@@ -1,0 +1,19 @@
+[tool.bandit]
+# Bandit configuration for security scanning
+exclude_dirs = [
+    "tests",
+    "venv",
+    ".venv",
+    "env",
+    ".tox",
+    ".eggs",
+]
+
+# Skipped tests (if any specific false positives)
+skips = [
+    # B101: Test for use of assert (we use assert in tests, that's OK)
+]
+
+[tool.bandit.assert_used]
+# Allow assert in test files
+exclude = ["*/tests/*"]
