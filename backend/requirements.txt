@@ -3,6 +3,7 @@ fastapi
 uvicorn[standard]
 pydantic
 pydantic-settings
+scalar-fastapi
 
 llama-cpp-python
 huggingface-hub==0.24.1

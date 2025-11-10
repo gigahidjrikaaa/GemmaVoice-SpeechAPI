@@ -7,13 +7,14 @@ This directory contains all Docker-related files for the GemmaVoice Speech API p
 ```
 docker/
 ├── Dockerfile                      # Backend API (FastAPI + Gemma LLM + Faster-Whisper)
-├── openaudio.Dockerfile            # OpenAudio TTS service
 ├── docker-compose.yml              # Base compose (local development with GPU)
 ├── docker-compose.cpu.yml          # CPU-only mode (no GPU required)
 ├── docker-compose.prod.yml         # Production configuration
 ├── docker-compose.test.yml         # Integration testing
 └── docker-compose.monitoring.yml   # Observability stack (Prometheus, Grafana, Loki)
 ```
+
+**Note:** The `openaudio.Dockerfile` has been removed. OpenAudio now uses the official `fishaudio/fish-speech` Docker images.
 
 ## 🚀 Quick Start
 
@@ -48,41 +49,56 @@ docker compose -f docker-compose.prod.yml -f docker-compose.monitoring.yml up -d
 ## 📋 Configuration Files
 
 ### `Dockerfile`
+
 - Multi-stage build for backend API
 - Base: NVIDIA CUDA 12.4.1 with cuDNN
 - Runtime: Python 3.11, llama-cpp-python with CUDA support, Faster-Whisper
 - Non-root user for security
 - Prebuilt llama-cpp-python wheel for faster builds
 
-### `openaudio.Dockerfile`
-- OpenAudio S1-mini TTS service
-- Requires checkpoints in `backend/openaudio-checkpoints/`
-- See [Voice Cloning Guide](../backend/VOICE_CLONING_GUIDE.md) for setup
+### OpenAudio Service
+
+- **Architecture:** Uses official `fishaudio/fish-speech` Docker images
+- **Images:** 
+  - GPU: `fishaudio/fish-speech:server-cuda`
+  - CPU: `fishaudio/fish-speech:server-cpu`
+- **Checkpoints:** Mounted from `backend/openaudio-checkpoints/`
+- **Setup:** See [Voice Cloning Guide](../backend/VOICE_CLONING_GUIDE.md)
+- **Benefits:** 
+  - No custom build required
+  - All dependencies pre-installed
+  - Official support from Fish Audio team
+  - Automatic environment setup via entrypoint
 
 ### `docker-compose.yml`
+
 - **Purpose:** Local development with GPU acceleration
 - **Services:** gemma_service, openaudio
 - **GPU:** Enabled for both services
 - **Ports:** 6666 (API), 8080 (TTS)
 
 ### `docker-compose.cpu.yml`
+
 - **Purpose:** CPU-only mode for systems without GPU
 - **GPU:** Disabled
 - **Compute:** Faster-Whisper uses int8 quantization for CPU
 - **Use case:** Windows/WSL without NVIDIA drivers
 
 ### `docker-compose.prod.yml`
+
 - **Purpose:** Production deployment via CI/CD
-- **Images:** Pre-built from GitHub Container Registry
+- **Images:** Pre-built from GitHub Container Registry (backend), official Fish-Speech (OpenAudio)
 - **Features:** Resource limits, health checks, logging, persistent volumes
 - **Security:** API keys, rate limiting enabled
 
 ### `docker-compose.test.yml`
+
 - **Purpose:** Integration testing in CI/CD
 - **Features:** Mock services, test-specific config, isolated network
 - **Usage:** `pytest backend/tests/integration/`
 
 ### `docker-compose.monitoring.yml`
+
 - **Purpose:** Observability stack
 - **Services:** Prometheus, Grafana, Loki, Promtail, Node Exporter, cAdvisor
 - **Dashboards:** Metrics, logs, alerts

@@ -3,7 +3,7 @@
 from functools import lru_cache
 from typing import Optional
 
-from pydantic import Field, PositiveFloat, PositiveInt, field_validator
+from pydantic import Field, PositiveFloat, PositiveInt, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -33,6 +33,23 @@ class Settings(BaseSettings):
         default="X-Request-ID",
         alias="REQUEST_ID_HEADER",
         description="HTTP header used to propagate the request identifier.",
+    )
+    
+    # API Documentation
+    use_scalar_docs: bool = Field(
+        default=True,
+        alias="USE_SCALAR_DOCS",
+        description="Use Scalar for API documentation instead of Swagger UI.",
+    )
+    docs_url: str = Field(
+        default="/docs",
+        alias="DOCS_URL",
+        description="Path where API documentation is served.",
+    )
+    openapi_url: str = Field(
+        default="/openapi.json",
+        alias="OPENAPI_URL",
+        description="Path where OpenAPI schema is served.",
     )
 
     # API security configuration
@@ -74,11 +91,11 @@ class Settings(BaseSettings):
 
     # Hugging Face / LLM configuration
     llm_repo_id: str = Field(
-        default="google/gemma-3-12b-it-qat-q4_0-gguf",
+        default="bartowski/google_gemma-3-12b-it-GGUF",
         description="Repository identifier for the default Gemma GGUF checkpoint.",
     )
     llm_model_filename: str = Field(
-        default="gemma-3-12b-it-q4_0.gguf",
+        default="google_gemma-3-12b-it-Q4_0.gguf",
         description="Filename of the quantised GGUF model to download from Hugging Face.",
     )
     hugging_face_hub_token: Optional[str] = Field(
@@ -208,6 +225,26 @@ class Settings(BaseSettings):
         if isinstance(value, list):
             return [item for item in value if item]
         raise TypeError("Invalid value for API_KEYS")
+
+    @field_validator(
+        "hugging_face_hub_token",
+        "openai_api_key",
+        "openai_api_base",
+        "openaudio_api_key",
+        "openaudio_default_reference_id",
+        mode="before",
+    )
+    @classmethod
+    def _convert_empty_string_to_none(cls, value: Optional[str]) -> Optional[str]:
+        """Convert empty strings to None for optional string fields.
+        
+        This handles Docker Compose environment variables like ${VAR:-} which
+        evaluate to empty strings when not set, causing issues with APIs that
+        interpret empty strings as invalid credentials.
+        """
+        if value == "":
+            return None
+        return value
 
 
 @lru_cache()

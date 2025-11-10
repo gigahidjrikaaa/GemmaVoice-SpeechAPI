@@ -14,20 +14,28 @@ Complete speech pipeline combining:
 
 ## 📚 Documentation
 
-### Quick Start
-- **[Local Setup Guide](LOCAL_SETUP_GUIDE.md)** - Complete development setup (Docker, GPU, models)
-- **[GPU Configuration](backend/GPU_SETUP.md)** - Windows/WSL GPU setup and CPU fallback
+**[📖 Complete Documentation Index](docs/README.md)** - Start here for all guides and references
 
-### Features & Usage
-- **[Voice Cloning Guide](backend/VOICE_CLONING_GUIDE.md)** - Custom voice references for Bahasa Indonesia
-- **[API Reference](docs/scalar/openapi.yaml)** - Interactive OpenAPI 3.1 documentation
-- **[Frontend Playground](frontend/)** - React testing UI with all endpoints
+### Quick Links
 
-### Production & Operations
-- **[CI/CD Setup](deploy/README.md)** - Complete production deployment with GitHub Actions
-- **[CI/CD Review](.github/CI_CD_REVIEW.md)** - Security audit and best practices assessment
-- **[Security & Monitoring](SECURITY_MONITORING_GUIDE.md)** - Prometheus, Grafana, vulnerability scanning
-- **[Deployment Summary](CI_CD_SETUP_SUMMARY.md)** - Quick reference for DevOps team
+#### 🚀 Getting Started
+- **[Local Setup Guide](docs/setup/LOCAL_SETUP_GUIDE.md)** - Complete development setup
+- **[Migration & Deployment](docs/setup/MIGRATION_AND_DEPLOYMENT.md)** - Port configuration and deployment fixes
+- **[GPU Configuration](backend/GPU_SETUP.md)** - Windows/WSL GPU setup
+
+#### 📖 API Documentation
+- **[Interactive API Docs](http://localhost:21250/docs)** - Scalar documentation (after starting services)
+- **[Scalar Setup Guide](docs/scalar/SETUP.md)** - Get Scalar running
+- **[OpenAPI Specification](docs/scalar/openapi.yaml)** - Complete API reference
+
+#### 🎤 Features & Guides
+- **[Voice Cloning Guide](docs/guides/VOICE_CLONING_GUIDE.md)** - Custom voice references for Bahasa Indonesia
+- **[Frontend Enhancements](docs/FRONTEND_ENHANCEMENTS.md)** - Error logging and UI improvements
+- **[Live Conversation Guide](frontend/LIVE_CONVERSATION_GUIDE.md)** - Real-time conversation features
+
+#### 🚢 Production & Operations
+- **[CI/CD Setup](deploy/README.md)** - Production deployment with GitHub Actions
+- **[Docker Configuration](docker/README.md)** - Container setup and troubleshooting
 
 ---
 

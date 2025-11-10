@@ -3,16 +3,19 @@ import { SettingsPanel } from "./components/SettingsPanel";
 import { TabView } from "./components/TabView";
 import { ConfigProvider } from "./context/ConfigContext";
 import { TabsProvider, useTabs } from "./context/TabsContext";
+import { ModelsProvider } from "./context/ModelsContext";
 import { DialoguePanel } from "./components/DialoguePanel";
 import { GenerationPanel } from "./components/GenerationPanel";
 import { SynthesisPanel } from "./components/SynthesisPanel";
 import { TranscriptionPanel } from "./components/TranscriptionPanel";
+import { ConversationPanel } from "./components/ConversationPanel";
 import { ToastProvider } from "./components/Toast";
 
 const tabs = [
   { id: "generate", label: "Text Generation", component: GenerationPanel },
   { id: "stt", label: "Speech to Text", component: TranscriptionPanel },
   { id: "tts", label: "Text to Speech", component: SynthesisPanel },
+  { id: "conversation", label: "🎙️ Live Conversation", component: ConversationPanel },
   { id: "dialogue", label: "Dialogue", component: DialoguePanel }
 ];
 
@@ -42,9 +45,11 @@ export default function App() {
   return (
     <ToastProvider>
       <ConfigProvider>
-        <TabsProvider defaultTab="generate">
-          <AppShell />
-        </TabsProvider>
+        <ModelsProvider>
+          <TabsProvider defaultTab="generate">
+            <AppShell />
+          </TabsProvider>
+        </ModelsProvider>
       </ConfigProvider>
     </ToastProvider>
   );

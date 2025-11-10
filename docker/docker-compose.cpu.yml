@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   gemma_service:
     build:
@@ -28,7 +26,7 @@ services:
       - RATE_LIMIT_WINDOW_SECONDS=${RATE_LIMIT_WINDOW_SECONDS:-60}
       - RATE_LIMIT_BURST_MULTIPLIER=${RATE_LIMIT_BURST_MULTIPLIER:-1.0}
       - OPENAUDIO_API_KEY=${OPENAUDIO_API_KEY:-}
-      - OPENAUDIO_API_BASE=${OPENAUDIO_API_BASE:-http://openaudio:8080}
+      - OPENAUDIO_API_BASE=${OPENAUDIO_API_BASE:-http://openaudio:21251}
       - OPENAUDIO_TTS_PATH=${OPENAUDIO_TTS_PATH:-/v1/tts}
       - OPENAUDIO_DEFAULT_FORMAT=${OPENAUDIO_DEFAULT_FORMAT:-wav}
       - OPENAUDIO_DEFAULT_REFERENCE_ID=${OPENAUDIO_DEFAULT_REFERENCE_ID:-}
@@ -36,7 +34,7 @@ services:
       - OPENAUDIO_TIMEOUT_SECONDS=${OPENAUDIO_TIMEOUT_SECONDS:-120}
       - OPENAUDIO_MAX_RETRIES=${OPENAUDIO_MAX_RETRIES:-3}
     ports:
-      - "6666:6666"
+      - "21250:6666"
     networks:
       - shared_services_network
     healthcheck:
@@ -46,22 +44,31 @@ services:
       retries: 5
 
   openaudio:
-    build:
-      context: ../backend
-      dockerfile: ../docker/openaudio.Dockerfile
-      args:
-        REPO_URL: ${REPO_URL}
+    image: fishaudio/fish-speech:server-cpu
     container_name: openaudio
     restart: unless-stopped
-    # NO GPU configuration for CPU-only mode
+    volumes:
+      - ../backend/openaudio-checkpoints:/app/checkpoints:ro
+      - openaudio-references:/app/references
     environment:
-      - MODEL_NAME=OpenAudio-S1-mini
-      - DEVICE=cpu  # Force CPU mode
+      - API_SERVER_NAME=0.0.0.0
+      - API_SERVER_PORT=21251
+    # NO GPU configuration for CPU-only mode
     networks:
       - shared_services_network
     ports:
-      - "8080:8080"
+      - "21251:21251"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:21251/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
 
 networks:
   shared_services_network:
     external: true
+
+volumes:
+  openaudio-references:
+    driver: local

@@ -1,0 +1,42 @@
+{
+  "theme": "default",
+  "layout": "modern",
+  "hideModels": false,
+  "hideTryIt": false,
+  "hideDownloadButton": false,
+  "darkMode": true,
+  "customCss": "",
+  "searchHotKey": "k",
+  "showSidebar": true,
+  "authentication": {
+    "preferredSecurityScheme": "ApiKeyAuth",
+    "apiKey": {
+      "token": ""
+    }
+  },
+  "metadata": {
+    "title": "GemmaVoice Speech API Documentation",
+    "description": "Complete API reference for GemmaVoice - combining Gemma 3 LLM, Whisper STT, and OpenAudio TTS with voice cloning",
+    "ogTitle": "GemmaVoice Speech API",
+    "ogDescription": "Production-ready speech API with AI generation, transcription, and synthesis",
+    "ogImage": "https://example.com/og-image.png",
+    "twitterCard": "summary_large_image"
+  },
+  "servers": [
+    {
+      "url": "http://localhost:8000",
+      "description": "Local Development"
+    },
+    {
+      "url": "http://localhost:6666",
+      "description": "Backend Default Port"
+    },
+    {
+      "url": "https://api.example.com",
+      "description": "Production"
+    }
+  ],
+  "tagsSorter": "alpha",
+  "operationsSorter": "alpha",
+  "hiddenClients": []
+}

@@ -19,10 +19,11 @@ const STORAGE_KEY = "aicare-config";
 const ConfigContext = createContext<{
   config: ClientConfig;
   updateConfig: (partial: Partial<ClientConfig>) => void;
+  clearSettings: () => void;
 } | null>(null);
 
 const defaultConfig: ClientConfig = {
-  baseUrl: (import.meta as any).env?.VITE_API_BASE_URL ?? "http://localhost:8000",
+  baseUrl: (import.meta as any).env?.VITE_API_BASE_URL ?? "http://localhost:21250",
   apiKey: (import.meta as any).env?.VITE_API_KEY ?? "",
   streamingMode: "rest"
 };
@@ -58,7 +59,14 @@ export function ConfigProvider({ children }: ConfigProviderProps) {
     setConfig((prev) => ({ ...prev, ...partial }));
   }, []);
 
-  const value = useMemo(() => ({ config, updateConfig }), [config, updateConfig]);
+  const clearSettings = useCallback(() => {
+    if (typeof window !== "undefined") {
+      window.localStorage.removeItem(STORAGE_KEY);
+    }
+    setConfig(defaultConfig);
+  }, []);
+
+  const value = useMemo(() => ({ config, updateConfig, clearSettings }), [config, updateConfig, clearSettings]);
 
   return <ConfigContext.Provider value={value}>{children}</ConfigContext.Provider>;
 }

@@ -1,3 +1,5 @@
+import { ErrorBoundary } from "./ErrorBoundary";
+
 type TabConfig = {
   id: string;
   label: string;
@@ -31,7 +33,9 @@ export function TabView({ tabs, activeTab, onTabChange }: TabViewProps) {
         })}
       </nav>
       <section className="rounded-lg border border-slate-800 bg-slate-900/60 p-4 shadow-lg">
-        {ActiveComponent ? <ActiveComponent /> : null}
+        <ErrorBoundary key={activeTab}>
+          {ActiveComponent ? <ActiveComponent /> : null}
+        </ErrorBoundary>
       </section>
     </div>
   );

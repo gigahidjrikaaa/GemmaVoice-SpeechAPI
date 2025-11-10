@@ -3,24 +3,130 @@ info:
   title: Gemma 3 Speech API
   version: 1.0.0
   description: |
-    Scalar reference for the Gemma 3 FastAPI deployment that combines text generation,
-    OpenAI Whisper transcription, and OpenAudio speech synthesis. The specification
-    documents both REST and WebSocket surfaces, highlights authentication expectations,
-    and provides concrete request/response samples for QA.
+    # 🎙️ GemmaVoice Speech API
+    
+    A production-ready FastAPI deployment that combines:
+    - **🤖 Gemma 3 LLM** - Text generation with llama.cpp
+    - **🎧 OpenAI Whisper** - Speech-to-text transcription
+    - **🔊 OpenAudio** - High-quality text-to-speech synthesis
+    - **🎭 Voice Cloning** - Custom voice synthesis with reference audio
+    
+    ## Features
+    
+    - REST and WebSocket APIs
+    - API key authentication
+    - Rate limiting
+    - Streaming responses
+    - Voice cloning support
+    - Multi-format audio support
+    
+    ## Quick Start
+    
+    ```bash
+    # Set your API key
+    export API_KEY=your-api-key-here
+    
+    # Generate text
+    curl -X POST http://localhost:8000/v1/generate \
+      -H "X-API-Key: $API_KEY" \
+      -H "Content-Type: application/json" \
+      -d '{"prompt": "Hello, world!", "max_tokens": 50}'
+    ```
+  contact:
+    name: API Support
+    email: support@example.com
+    url: https://github.com/gigahidjrikaaa/GemmaVoice-SpeechAPI
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+  x-scalar-sdk-installation:
+    - lang: Python
+      description: Install the required Python packages to interact with the API
+      source: |-
+        pip install requests httpx aiohttp
+    - lang: Node
+      description: Install packages for JavaScript/TypeScript integration
+      source: |-
+        npm install axios node-fetch form-data
+    - lang: cURL
+      description: cURL is pre-installed on most systems. Use it directly from your terminal.
+      source: |-
+        # No installation needed - cURL comes pre-installed
+        curl --version
 servers:
+  - url: http://localhost:21250
+    description: Local gemma-service (main API)
+  - url: http://localhost:21251
+    description: Local OpenAudio service (TTS)
   - url: http://localhost:8000
-    description: Local development server
+    description: Alternative local port
+  - url: http://localhost:6666
+    description: Alternative local port (backend default)
   - url: https://api.example.com
-    description: Example production deployment
+    description: Production deployment
 tags:
   - name: Health
-    description: Liveness and metrics endpoints.
+    x-displayName: 🏥 Health & Metrics
+    description: |
+      Liveness checks and Prometheus metrics endpoints.
+      
+      These endpoints help monitor the service health and performance.
   - name: Generation
-    description: Text-only generation over REST and streaming/WebSocket channels.
+    x-displayName: 🤖 Text Generation
+    description: |
+      Text generation using Gemma 3 LLM over REST and WebSocket channels.
+      
+      Supports both synchronous and streaming responses with full parameter control.
   - name: Speech
-    description: Whisper transcription, OpenAudio synthesis, and dialogue orchestration APIs.
+    x-displayName: 🎙️ Speech Processing
+    description: |
+      Complete speech processing pipeline:
+      - **Speech-to-Text** with OpenAI Whisper
+      - **Text-to-Speech** with OpenAudio
+      - **Voice Cloning** with reference audio
+      - **Dialogue** orchestration (STT → LLM → TTS)
   - name: WebSockets
-    description: Bidirectional streaming channels.
+    x-displayName: 🔌 WebSocket Streams
+    description: |
+      Bidirectional streaming channels for real-time communication.
+      
+      Perfect for interactive applications and low-latency responses.
+  - name: OpenAudio
+    x-displayName: 🔊 OpenAudio Integration
+    description: |
+      **OpenAudio-S1-mini** is a high-quality text-to-speech service integrated into GemmaVoice.
+      
+      ## Architecture
+      
+      GemmaVoice acts as a proxy to OpenAudio, which runs on port **21251** by default.
+      - Main API: `http://localhost:21250` (gemma-service)
+      - OpenAudio: `http://localhost:21251` (direct TTS service)
+      
+      ## Features
+      
+      - **Multiple audio formats**: WAV, MP3, OGG, FLAC, PCM
+      - **Configurable sample rates**: 16kHz, 22.05kHz, 44.1kHz, 48kHz
+      - **Voice cloning**: Upload 3-5 reference audio samples
+      - **Streaming synthesis**: Real-time audio generation
+      - **Reference voices**: Use pre-configured voice IDs
+      
+      ## Direct OpenAudio Endpoints
+      
+      While GemmaVoice provides `/v1/text-to-speech`, you can also call OpenAudio directly:
+      - Direct TTS: `POST http://localhost:21251/v1/tts`
+      - Health check: `GET http://localhost:21251/health`
+      
+      ## Configuration
+      
+      Configure OpenAudio connection via environment variables:
+      ```bash
+      OPENAUDIO_API_BASE=http://localhost:21251
+      OPENAUDIO_TTS_PATH=/v1/tts
+      OPENAUDIO_TIMEOUT_SECONDS=120
+      OPENAUDIO_MAX_RETRIES=3
+      OPENAUDIO_DEFAULT_FORMAT=wav
+      OPENAUDIO_DEFAULT_NORMALIZE=true
+      ```
 security:
   - ApiKeyAuth: []
 components:
@@ -381,7 +487,65 @@ paths:
       tags:
         - Generation
       summary: Generate text
-      description: Produces a complete LLM response for the supplied prompt.
+      description: |
+        Produces a complete LLM response for the supplied prompt using Gemma 3.
+        
+        ## Use Cases
+        - Content generation
+        - Text completion
+        - Question answering
+        - Code generation
+        - Creative writing
+        
+        ## Parameters
+        Control generation with temperature, top_p, max_tokens, and more.
+      x-codeSamples:
+        - lang: cURL
+          label: Basic Generation
+          source: |-
+            curl -X POST http://localhost:8000/v1/generate \
+              -H "X-API-Key: your-api-key" \
+              -H "Content-Type: application/json" \
+              -d '{
+                "prompt": "Write a haiku about FastAPI",
+                "max_tokens": 128,
+                "temperature": 0.7
+              }'
+        - lang: Python
+          label: Python with Requests
+          source: |-
+            import requests
+            
+            response = requests.post(
+                "http://localhost:8000/v1/generate",
+                headers={"X-API-Key": "your-api-key"},
+                json={
+                    "prompt": "Write a haiku about FastAPI",
+                    "max_tokens": 128,
+                    "temperature": 0.7
+                }
+            )
+            
+            result = response.json()
+            print(result["generated_text"])
+        - lang: JavaScript
+          label: JavaScript with Fetch
+          source: |-
+            const response = await fetch('http://localhost:8000/v1/generate', {
+              method: 'POST',
+              headers: {
+                'X-API-Key': 'your-api-key',
+                'Content-Type': 'application/json'
+              },
+              body: JSON.stringify({
+                prompt: 'Write a haiku about FastAPI',
+                max_tokens: 128,
+                temperature: 0.7
+              })
+            });
+            
+            const data = await response.json();
+            console.log(data.generated_text);
       requestBody:
         required: true
         content:
@@ -424,6 +588,83 @@ paths:
       description: |
         Streams newline-delimited JSON objects containing the progressively generated text. Each
         chunk contains `{"generated_text": "..."}` with the cumulative output.
+        
+        **Use Cases:**
+        - Low-latency text generation for chat interfaces
+        - Real-time content generation with progressive display
+        - Streaming AI responses for better user experience
+        
+        **Response Format:**
+        - Content-Type: `application/x-ndjson` (newline-delimited JSON)
+        - Each line is a complete JSON object with cumulative output
+        - Final line contains the complete generated text
+      x-codeSamples:
+        - lang: cURL
+          label: cURL
+          source: |
+            curl -N -X POST http://localhost:8000/v1/generate_stream \
+              -H "X-API-Key: your-api-key-here" \
+              -H "Content-Type: application/json" \
+              -d '{
+                "prompt": "Write a story about AI:",
+                "max_tokens": 100,
+                "temperature": 0.8
+              }'
+        - lang: Python
+          label: Python
+          source: |
+            import requests
+            
+            url = "http://localhost:8000/v1/generate_stream"
+            headers = {
+                "X-API-Key": "your-api-key-here",
+                "Content-Type": "application/json"
+            }
+            data = {
+                "prompt": "Write a story about AI:",
+                "max_tokens": 100,
+                "temperature": 0.8
+            }
+            
+            with requests.post(url, headers=headers, json=data, stream=True) as response:
+                response.raise_for_status()
+                for line in response.iter_lines():
+                    if line:
+                        import json
+                        chunk = json.loads(line)
+                        print(chunk["generated_text"], end="\r")
+                print()  # Final newline
+        - lang: JavaScript
+          label: JavaScript
+          source: |
+            const response = await fetch('http://localhost:8000/v1/generate_stream', {
+              method: 'POST',
+              headers: {
+                'X-API-Key': 'your-api-key-here',
+                'Content-Type': 'application/json'
+              },
+              body: JSON.stringify({
+                prompt: 'Write a story about AI:',
+                max_tokens: 100,
+                temperature: 0.8
+              })
+            });
+            
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+            
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) break;
+              
+              const chunk = decoder.decode(value);
+              const lines = chunk.split('\n').filter(line => line.trim());
+              
+              for (const line of lines) {
+                const data = JSON.parse(line);
+                console.log(data.generated_text);
+              }
+            }
       requestBody:
         required: true
         content:
@@ -464,7 +705,88 @@ paths:
         tokens. After authentication the client should send JSON payloads matching the
         `GenerationRequest` schema. Each token is returned as `{"token": "..."}` and the stream
         terminates with `{"status": "done"}`.
+        
+        **Connection:**
+        - URL: `ws://localhost:8000/v1/generate_ws?api_key=your-api-key-here`
+        - Protocol: WebSocket
+        - Authentication: API key in query parameter
+        
+        **Message Format:**
+        - **Client → Server:** JSON object with `prompt`, `max_tokens`, `temperature`, etc.
+        - **Server → Client:** Stream of `{"token": "..."}` messages, ending with `{"status": "done"}`
+        
+        **Use Cases:**
+        - Real-time token-by-token text generation
+        - Interactive chat applications
+        - Low-latency streaming for live responses
       x-scalar-websocket: true
+      x-codeSamples:
+        - lang: JavaScript
+          label: JavaScript (Browser)
+          source: |
+            const ws = new WebSocket('ws://localhost:8000/v1/generate_ws?api_key=your-api-key-here');
+            
+            ws.onopen = () => {
+              console.log('Connected to WebSocket');
+              
+              // Send generation request
+              ws.send(JSON.stringify({
+                prompt: 'Tell me a joke:',
+                max_tokens: 50,
+                temperature: 0.7
+              }));
+            };
+            
+            let fullText = '';
+            ws.onmessage = (event) => {
+              const data = JSON.parse(event.data);
+              
+              if (data.token) {
+                fullText += data.token;
+                console.log('Token:', data.token);
+                // Update UI with token
+              } else if (data.status === 'done') {
+                console.log('Complete text:', fullText);
+                ws.close();
+              }
+            };
+            
+            ws.onerror = (error) => {
+              console.error('WebSocket error:', error);
+            };
+        - lang: Python
+          label: Python
+          source: |
+            import asyncio
+            import websockets
+            import json
+            
+            async def generate_text():
+                uri = "ws://localhost:8000/v1/generate_ws?api_key=your-api-key-here"
+                
+                async with websockets.connect(uri) as websocket:
+                    # Send generation request
+                    await websocket.send(json.dumps({
+                        "prompt": "Tell me a joke:",
+                        "max_tokens": 50,
+                        "temperature": 0.7
+                    }))
+                    
+                    full_text = ""
+                    async for message in websocket:
+                        data = json.loads(message)
+                        
+                        if "token" in data:
+                            full_text += data["token"]
+                            print(data["token"], end="", flush=True)
+                        elif data.get("status") == "done":
+                            print("\nGeneration complete!")
+                            break
+                    
+                    return full_text
+            
+            # Run the async function
+            asyncio.run(generate_text())
       responses:
         '101':
           description: WebSocket upgrade.
@@ -473,6 +795,53 @@ paths:
       tags:
         - Generation
       summary: List available models
+      description: |
+        Retrieves a list of all available LLM models that can be used for text generation.
+        
+        **Use Cases:**
+        - Display model selector in UI
+        - Check available models before making requests
+        - Get model capabilities and context limits
+      x-codeSamples:
+        - lang: cURL
+          label: cURL
+          source: |
+            curl -X GET http://localhost:8000/v1/models \
+              -H "X-API-Key: your-api-key-here"
+        - lang: Python
+          label: Python
+          source: |
+            import requests
+            
+            url = "http://localhost:8000/v1/models"
+            headers = {"X-API-Key": "your-api-key-here"}
+            
+            response = requests.get(url, headers=headers)
+            response.raise_for_status()
+            
+            data = response.json()
+            for model in data["models"]:
+                print(f"ID: {model['id']}")
+                print(f"Name: {model['name']}")
+                print(f"Description: {model['description']}")
+                print("---")
+        - lang: JavaScript
+          label: JavaScript
+          source: |
+            const response = await fetch('http://localhost:8000/v1/models', {
+              headers: {
+                'X-API-Key': 'your-api-key-here'
+              }
+            });
+            
+            const data = await response.json();
+            
+            data.models.forEach(model => {
+              console.log(`ID: ${model.id}`);
+              console.log(`Name: ${model.name}`);
+              console.log(`Description: ${model.description}`);
+              console.log('---');
+            });
       responses:
         '200':
           description: Array of supported model descriptors.
@@ -496,6 +865,50 @@ paths:
       tags:
         - Generation
       summary: Retrieve model metadata
+      description: |
+        Get detailed information about a specific model, including its parameters,
+        context length, and capabilities.
+        
+        **Use Cases:**
+        - Display model details in UI
+        - Check model capabilities before use
+        - Get context window size for prompt planning
+      x-codeSamples:
+        - lang: cURL
+          label: cURL
+          source: |
+            curl -X GET "http://localhost:8000/v1/models/google/gemma-3-12b-it-qat-q4_0-gguf" \
+              -H "X-API-Key: your-api-key-here"
+        - lang: Python
+          label: Python
+          source: |
+            import requests
+            
+            model_id = "google/gemma-3-12b-it-qat-q4_0-gguf"
+            url = f"http://localhost:8000/v1/models/{model_id}"
+            headers = {"X-API-Key": "your-api-key-here"}
+            
+            response = requests.get(url, headers=headers)
+            response.raise_for_status()
+            
+            model = response.json()
+            print(f"Model: {model['name']}")
+            print(f"Context length: {model.get('context_length', 'N/A')}")
+            print(f"Parameters: {model.get('parameters', 'N/A')}")
+        - lang: JavaScript
+          label: JavaScript
+          source: |
+            const modelId = 'google/gemma-3-12b-it-qat-q4_0-gguf';
+            const response = await fetch(`http://localhost:8000/v1/models/${modelId}`, {
+              headers: {
+                'X-API-Key': 'your-api-key-here'
+              }
+            });
+            
+            const model = await response.json();
+            console.log(`Model: ${model.name}`);
+            console.log(`Context length: ${model.context_length || 'N/A'}`);
+            console.log(`Parameters: ${model.parameters || 'N/A'}`);
       parameters:
         - in: path
           name: model_id
@@ -529,7 +942,61 @@ paths:
       tags:
         - Speech
       summary: Transcribe audio with Whisper
-      description: Upload an audio file and receive a Whisper transcription.
+      description: |
+        Upload an audio file and receive a Whisper transcription with optional timestamps.
+        
+        ## Supported Formats
+        - WAV, MP3, OGG, WebM, FLAC
+        - Sample rates: 8kHz to 48kHz
+        - Max file size: 25MB
+        
+        ## Features
+        - Automatic language detection
+        - Multi-language support
+        - Timestamp segments
+        - Custom prompts for context
+      x-codeSamples:
+        - lang: cURL
+          label: Transcribe Audio File
+          source: |-
+            curl -X POST http://localhost:8000/v1/speech-to-text \
+              -H "X-API-Key: your-api-key" \
+              -F "file=@recording.wav" \
+              -F "language=en"
+        - lang: Python
+          label: Python with Requests
+          source: |-
+            import requests
+            
+            with open('recording.wav', 'rb') as audio_file:
+                response = requests.post(
+                    'http://localhost:8000/v1/speech-to-text',
+                    headers={'X-API-Key': 'your-api-key'},
+                    files={'file': audio_file},
+                    data={'language': 'en'}
+                )
+            
+            result = response.json()
+            print(f"Transcript: {result['text']}")
+            for segment in result['segments']:
+                print(f"[{segment['start']:.2f}s - {segment['end']:.2f}s] {segment['text']}")
+        - lang: JavaScript
+          label: JavaScript with FormData
+          source: |-
+            const formData = new FormData();
+            formData.append('file', audioBlob, 'recording.wav');
+            formData.append('language', 'en');
+            
+            const response = await fetch('http://localhost:8000/v1/speech-to-text', {
+              method: 'POST',
+              headers: {
+                'X-API-Key': 'your-api-key'
+              },
+              body: formData
+            });
+            
+            const data = await response.json();
+            console.log('Transcript:', data.text);
       requestBody:
         required: true
         content:
@@ -597,7 +1064,111 @@ paths:
       tags:
         - Speech
       summary: Synthesize speech with OpenAudio
-      description: Generate speech audio from text using the OpenAudio-S1-mini deployment.
+      description: |
+        Generate high-quality speech audio from text using OpenAudio-S1-mini.
+        
+        ## Voice Cloning
+        Upload reference audio samples (3-10 seconds each) to clone a voice:
+        - Provide `references` array with base64-encoded audio
+        - Or use `reference_id` for pre-configured voices
+        
+        ## Streaming
+        Set `stream: true` to receive audio chunks progressively instead of waiting for complete synthesis.
+        
+        ## Formats
+        - WAV (recommended for quality)
+        - MP3 (smaller file size)
+        - OGG, FLAC
+      x-codeSamples:
+        - lang: cURL
+          label: Basic Text-to-Speech
+          source: |-
+            curl -X POST http://localhost:8000/v1/text-to-speech \
+              -H "X-API-Key: your-api-key" \
+              -H "Content-Type: application/json" \
+              -d '{
+                "text": "Hello! This is your AI assistant.",
+                "format": "wav",
+                "sample_rate": 22050
+              }'
+        - lang: cURL
+          label: Voice Cloning with Reference
+          source: |-
+            # First, encode your reference audio to base64
+            BASE64_AUDIO=$(base64 -w 0 reference.wav)
+            
+            curl -X POST http://localhost:8000/v1/text-to-speech \
+              -H "X-API-Key: your-api-key" \
+              -H "Content-Type: application/json" \
+              -d "{
+                \"text\": \"This will sound like the reference voice\",
+                \"format\": \"wav\",
+                \"references\": [\"$BASE64_AUDIO\"]
+              }"
+        - lang: Python
+          label: Python Voice Cloning
+          source: |-
+            import requests
+            import base64
+            
+            # Load and encode reference audio
+            with open('reference.wav', 'rb') as f:
+                reference_b64 = base64.b64encode(f.read()).decode('utf-8')
+            
+            response = requests.post(
+                'http://localhost:8000/v1/text-to-speech',
+                headers={'X-API-Key': 'your-api-key'},
+                json={
+                    'text': 'This will sound like the reference voice',
+                    'format': 'wav',
+                    'references': [reference_b64],
+                    'sample_rate': 22050
+                }
+            )
+            
+            result = response.json()
+            
+            # Decode and save the audio
+            audio_data = base64.b64decode(result['audio_base64'])
+            with open('output.wav', 'wb') as f:
+                f.write(audio_data)
+        - lang: JavaScript
+          label: JavaScript with Voice Cloning
+          source: |-
+            // Convert file to base64
+            async function fileToBase64(file) {
+              return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = () => resolve(reader.result.split(',')[1]);
+                reader.onerror = reject;
+                reader.readAsDataURL(file);
+              });
+            }
+            
+            // Upload reference and synthesize
+            const referenceFile = document.getElementById('reference').files[0];
+            const referenceB64 = await fileToBase64(referenceFile);
+            
+            const response = await fetch('http://localhost:8000/v1/text-to-speech', {
+              method: 'POST',
+              headers: {
+                'X-API-Key': 'your-api-key',
+                'Content-Type': 'application/json'
+              },
+              body: JSON.stringify({
+                text: 'This will sound like the reference voice',
+                format: 'mp3',
+                references: [referenceB64]
+              })
+            });
+            
+            const data = await response.json();
+            const audioBlob = await fetch(`data:audio/mp3;base64,${data.audio_base64}`).then(r => r.blob());
+            const audioUrl = URL.createObjectURL(audioBlob);
+            
+            // Play the audio
+            const audio = new Audio(audioUrl);
+            audio.play();
       requestBody:
         required: true
         content:
@@ -673,9 +1244,99 @@ paths:
         - Speech
       summary: Run end-to-end dialogue pipeline
       description: |
-        Upload a user utterance, obtain the Whisper transcript, Gemma LLM response text, and
-        synthesized OpenAudio reply. Optionally stream newline-delimited JSON events by setting
-        `stream_audio=true`.
+        Complete voice-to-voice conversation in one API call:
+        
+        1. **Speech-to-Text**: Transcribe user audio with Whisper
+        2. **LLM Generation**: Generate response with Gemma 3
+        3. **Text-to-Speech**: Synthesize reply with OpenAudio
+        
+        ## Use Cases
+        - Voice assistants
+        - Interactive voice bots
+        - Voice-based customer service
+        - Language learning apps
+        
+        ## Streaming Mode
+        Set `stream_audio=true` to receive newline-delimited JSON events as the pipeline progresses.
+      x-codeSamples:
+        - lang: cURL
+          label: Voice Dialogue
+          source: |-
+            curl -X POST http://localhost:8000/v1/dialogue \
+              -H "X-API-Key: your-api-key" \
+              -F "file=@user_audio.wav" \
+              -F "instructions=You are a helpful assistant" \
+              -F 'generation_config={"temperature": 0.7, "max_tokens": 256}' \
+              -F 'synthesis_config={"format": "wav"}'
+        - lang: Python
+          label: Python Complete Dialogue
+          source: |-
+            import requests
+            import json
+            import base64
+            
+            with open('user_audio.wav', 'rb') as audio_file:
+                response = requests.post(
+                    'http://localhost:8000/v1/dialogue',
+                    headers={'X-API-Key': 'your-api-key'},
+                    files={'file': audio_file},
+                    data={
+                        'instructions': 'You are a helpful assistant',
+                        'generation_config': json.dumps({
+                            'temperature': 0.7,
+                            'max_tokens': 256
+                        }),
+                        'synthesis_config': json.dumps({
+                            'format': 'wav'
+                        })
+                    }
+                )
+            
+            result = response.json()
+            
+            # Access transcript
+            print(f"User said: {result['transcript']['text']}")
+            
+            # Access AI response
+            print(f"AI replied: {result['response_text']}")
+            
+            # Save audio response
+            audio_data = base64.b64decode(result['audio_base64'])
+            with open('assistant_reply.wav', 'wb') as f:
+                f.write(audio_data)
+        - lang: JavaScript
+          label: JavaScript Dialogue Pipeline
+          source: |-
+            const formData = new FormData();
+            formData.append('file', audioBlob, 'user_audio.wav');
+            formData.append('instructions', 'You are a helpful assistant');
+            formData.append('generation_config', JSON.stringify({
+              temperature: 0.7,
+              max_tokens: 256
+            }));
+            formData.append('synthesis_config', JSON.stringify({
+              format: 'wav'
+            }));
+            
+            const response = await fetch('http://localhost:8000/v1/dialogue', {
+              method: 'POST',
+              headers: {
+                'X-API-Key': 'your-api-key'
+              },
+              body: formData
+            });
+            
+            const data = await response.json();
+            
+            console.log('User:', data.transcript.text);
+            console.log('AI:', data.response_text);
+            
+            // Play audio response
+            const audioBlob = await fetch(
+              `data:audio/${data.response_format};base64,${data.audio_base64}`
+            ).then(r => r.blob());
+            const audio = new Audio(URL.createObjectURL(audioBlob));
+            audio.play();
       requestBody:
         required: true
         content:
@@ -756,7 +1417,91 @@ paths:
         should contain `{ "audio_base64": "..." }` plus optional fields like `filename` and
         `language`. The server responds with transcript payloads using
         `{ "event": "transcript", "data": { ... } }`.
+        
+        **Connection:**
+        - URL: `ws://localhost:8000/v1/speech-to-text/ws?api_key=your-api-key-here`
+        - Protocol: WebSocket
+        - Authentication: API key in query parameter
+        
+        **Message Format:**
+        - **Client → Server:** `{"audio_base64": "...", "language": "en", "filename": "audio.wav"}`
+        - **Server → Client:** `{"event": "transcript", "data": {"text": "...", "language": "...", "segments": [...]}}`
+        
+        **Use Cases:**
+        - Real-time transcription from microphone
+        - Live captioning for video calls
+        - Streaming audio transcription
       x-scalar-websocket: true
+      x-codeSamples:
+        - lang: JavaScript
+          label: JavaScript (Browser)
+          source: |
+            const ws = new WebSocket('ws://localhost:8000/v1/speech-to-text/ws?api_key=your-api-key-here');
+            
+            ws.onopen = () => {
+              console.log('Connected to STT WebSocket');
+              
+              // Convert audio file to base64
+              const fileInput = document.getElementById('audioInput');
+              const file = fileInput.files[0];
+              
+              const reader = new FileReader();
+              reader.onload = () => {
+                const base64 = reader.result.split(',')[1];
+                
+                // Send audio for transcription
+                ws.send(JSON.stringify({
+                  audio_base64: base64,
+                  language: 'en',
+                  filename: file.name
+                }));
+              };
+              reader.readAsDataURL(file);
+            };
+            
+            ws.onmessage = (event) => {
+              const message = JSON.parse(event.data);
+              
+              if (message.event === 'transcript') {
+                console.log('Transcript:', message.data.text);
+                console.log('Language:', message.data.language);
+                // Display transcript in UI
+              }
+            };
+        - lang: Python
+          label: Python
+          source: |
+            import asyncio
+            import websockets
+            import json
+            import base64
+            
+            async def transcribe_audio(audio_path):
+                uri = "ws://localhost:8000/v1/speech-to-text/ws?api_key=your-api-key-here"
+                
+                async with websockets.connect(uri) as websocket:
+                    # Read and encode audio file
+                    with open(audio_path, 'rb') as f:
+                        audio_data = base64.b64encode(f.read()).decode('utf-8')
+                    
+                    # Send audio for transcription
+                    await websocket.send(json.dumps({
+                        "audio_base64": audio_data,
+                        "language": "en",
+                        "filename": audio_path
+                    }))
+                    
+                    # Receive transcript
+                    response = await websocket.recv()
+                    message = json.loads(response)
+                    
+                    if message.get("event") == "transcript":
+                        print("Transcript:", message["data"]["text"])
+                        print("Language:", message["data"]["language"])
+                        return message["data"]
+            
+            # Run the async function
+            asyncio.run(transcribe_audio("audio.wav"))
       responses:
         '101':
           description: WebSocket upgrade.
@@ -771,7 +1516,98 @@ paths:
         `SpeechSynthesisRequest`. When `stream=true`, metadata (including optional `reference_id`) and
         base64 encoded audio chunks are emitted via `audio_chunk` events; otherwise a single
         `synthesis` payload is returned.
+        
+        **Connection:**
+        - URL: `ws://localhost:8000/v1/text-to-speech/ws?api_key=your-api-key-here`
+        - Protocol: WebSocket
+        - Authentication: API key in query parameter
+        
+        **Message Format:**
+        - **Client → Server:** `{"text": "...", "format": "wav", "sample_rate": 22050, "stream": true}`
+        - **Server → Client (streaming):** Multiple `{"event": "audio_chunk", "data": "base64..."}` messages
+        - **Server → Client (non-streaming):** Single `{"event": "synthesis", "data": {"audio_base64": "..."}}`
+        
+        **Use Cases:**
+        - Real-time text-to-speech for chat responses
+        - Streaming audio synthesis for long texts
+        - Low-latency voice generation
       x-scalar-websocket: true
+      x-codeSamples:
+        - lang: JavaScript
+          label: JavaScript (Streaming)
+          source: |
+            const ws = new WebSocket('ws://localhost:8000/v1/text-to-speech/ws?api_key=your-api-key-here');
+            
+            ws.onopen = () => {
+              console.log('Connected to TTS WebSocket');
+              
+              // Send synthesis request
+              ws.send(JSON.stringify({
+                text: 'Hello from GemmaVoice! This is streaming synthesis.',
+                format: 'wav',
+                sample_rate: 22050,
+                stream: true
+              }));
+            };
+            
+            const audioChunks = [];
+            ws.onmessage = (event) => {
+              const message = JSON.parse(event.data);
+              
+              if (message.event === 'audio_chunk') {
+                // Decode base64 chunk
+                const binaryString = atob(message.data);
+                const bytes = new Uint8Array(binaryString.length);
+                for (let i = 0; i < binaryString.length; i++) {
+                  bytes[i] = binaryString.charCodeAt(i);
+                }
+                audioChunks.push(bytes);
+              } else if (message.event === 'done') {
+                // Combine all chunks and play
+                const audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
+                const audioUrl = URL.createObjectURL(audioBlob);
+                const audio = new Audio(audioUrl);
+                audio.play();
+                
+                ws.close();
+              }
+            };
+        - lang: Python
+          label: Python
+          source: |
+            import asyncio
+            import websockets
+            import json
+            import base64
+            
+            async def synthesize_speech(text):
+                uri = "ws://localhost:8000/v1/text-to-speech/ws?api_key=your-api-key-here"
+                
+                async with websockets.connect(uri) as websocket:
+                    # Send synthesis request
+                    await websocket.send(json.dumps({
+                        "text": text,
+                        "format": "wav",
+                        "sample_rate": 22050,
+                        "stream": False  # Get complete audio at once
+                    }))
+                    
+                    # Receive synthesis result
+                    response = await websocket.recv()
+                    message = json.loads(response)
+                    
+                    if message.get("event") == "synthesis":
+                        audio_data = base64.b64decode(message["data"]["audio_base64"])
+                        
+                        # Save to file
+                        with open("output.wav", "wb") as f:
+                            f.write(audio_data)
+                        
+                        print("Audio saved to output.wav")
+                        return audio_data
+            
+            # Run the async function
+            asyncio.run(synthesize_speech("Hello from GemmaVoice!"))
       responses:
         '101':
           description: WebSocket upgrade.

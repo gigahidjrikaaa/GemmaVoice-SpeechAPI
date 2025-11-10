@@ -1,6 +1,7 @@
 import { ChangeEvent, FormEvent, useEffect, useRef, useState } from "react";
 import { useClientConfig } from "../context/ConfigContext";
 import { apiFetch, apiFetchStream } from "../lib/apiClient";
+import { base64ToBlob } from "../lib/audioUtils";
 import { useToast } from "./Toast";
 
 type DialogueResponse = {
@@ -57,7 +58,7 @@ export function DialoguePanel() {
       });
       setResult(data);
       if (data.audio_base64) {
-        const blob = base64ToBlob(data.audio_base64);
+        const blob = base64ToBlob(data.audio_base64, 'audio/wav');
         if (objectUrl) {
           URL.revokeObjectURL(objectUrl);
         }
@@ -200,14 +201,5 @@ export function DialoguePanel() {
       ) : null}
     </div>
   );
-}
-
-function base64ToBlob(base64: string) {
-  const binary = atob(base64);
-  const array = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i += 1) {
-    array[i] = binary.charCodeAt(i);
-  }
-  return new Blob([array], { type: "audio/wav" });
 }
 

@@ -1,10 +1,23 @@
-FROM fishaudio/fish-speech:latest-dev
-
-# Install git and git-lfs for checkpoint management
-RUN apt-get update && apt-get install -y git git-lfs && rm -rf /var/lib/apt/lists/*
+# Pin to a specific version for stability and reproducibility
+# Update this version tag as needed from: https://hub.docker.com/r/fishaudio/fish-speech/tags
+# Available tags: latest, latest-dev, server-cuda, server-cuda-nightly
+# Note: Use server-cuda tag for API server support
+FROM fishaudio/fish-speech:server-cuda
 
 # Create working directory
 WORKDIR /app
+
+# Install missing Python dependencies required by api_server.py
+# The base image has externally-managed Python, so use --break-system-packages
+RUN pip install --no-cache-dir --break-system-packages \
+    pyrootutils \
+    uvicorn \
+    fastapi \
+    kui \
+    loguru \
+    tyro \
+    pydantic \
+    ormsgpack
 
 # Copy checkpoints from the backend directory
 # Note: Build context is backend directory, so path is openaudio-checkpoints/
@@ -19,8 +32,11 @@ ENV COMPILE=1
 # Expose the API port
 EXPOSE 8080
 
+# Clear the default entrypoint from base image to run API server directly
+ENTRYPOINT []
+
 # Start the API server
-CMD ["python", "-m", "tools.api_server", \
+CMD ["python3", "-m", "tools.api_server", \
      "--listen", "0.0.0.0:8080", \
      "--llama-checkpoint-path", "checkpoints/OpenAudio-S1-mini", \
      "--decoder-checkpoint-path", "checkpoints/OpenAudio-S1-mini/codec.pth", \

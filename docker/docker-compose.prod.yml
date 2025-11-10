@@ -1,5 +1,3 @@
-version: '3.8'
-
 # ============================================================================
 # Production Docker Compose Configuration
 # ============================================================================
@@ -49,7 +47,7 @@ services:
       - LLM_MAX_TOKENS=${LLM_MAX_TOKENS:-2048}
       
       # OpenAudio (Text-to-Speech)
-      - OPENAUDIO_API_BASE=http://openaudio:8080
+      - OPENAUDIO_API_BASE=http://openaudio:21251
       - OPENAUDIO_DEFAULT_FORMAT=${OPENAUDIO_DEFAULT_FORMAT:-wav}
       - OPENAUDIO_DEFAULT_NORMALIZE=${OPENAUDIO_DEFAULT_NORMALIZE:-true}
       - OPENAUDIO_TIMEOUT_SECONDS=${OPENAUDIO_TIMEOUT_SECONDS:-120}
@@ -70,7 +68,7 @@ services:
       - ENVIRONMENT=${ENVIRONMENT:-production}
     
     ports:
-      - "${BACKEND_PORT:-6666}:6666"
+      - "${BACKEND_PORT:-21250}:6666"
     
     networks:
       - gemma_network
@@ -92,9 +90,13 @@ services:
   # OpenAudio Service (Text-to-Speech)
   # ==========================================================================
   openaudio:
-    image: ${OPENAUDIO_IMAGE:-gemma-voice-openaudio:latest}
+    image: fishaudio/fish-speech:server-cuda
     container_name: openaudio
     restart: unless-stopped
+    
+    volumes:
+      - openaudio-checkpoints:/app/checkpoints:ro
+      - openaudio-references:/app/references
     
     deploy:
       resources:
@@ -108,17 +110,18 @@ services:
           memory: 12G
     
     environment:
-      - MODEL_NAME=OpenAudio-S1-mini
       - COMPILE=1
+      - API_SERVER_NAME=0.0.0.0
+      - API_SERVER_PORT=21251
     
     networks:
       - gemma_network
     
     ports:
-      - "${OPENAUDIO_PORT:-8080}:8080"
+      - "${OPENAUDIO_PORT:-21251}:21251"
     
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:21251/health"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -179,4 +182,8 @@ volumes:
   huggingface-cache:
     driver: local
   whisper-cache:
+    driver: local
+  openaudio-checkpoints:
+    driver: local
+  openaudio-references:
     driver: local
