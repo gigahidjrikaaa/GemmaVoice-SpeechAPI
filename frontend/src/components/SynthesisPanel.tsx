@@ -234,11 +234,11 @@ export function SynthesisPanel() {
         troubleshooting={[
           {
             problem: "OpenAudio service unavailable error",
-            solution: "Ensure OpenAudio container is running on port 21251. Check with: docker ps. Start with: docker compose up -d openaudio_service",
+            solution: "Ensure the OpenAudio API container is running on port 21251. Check with: docker ps. Start with: docker compose up -d openaudio_api",
           },
           {
             problem: "No audio generated or silent output",
-            solution: "Verify text is not empty. Check OpenAudio service logs with: docker logs openaudio_service. Ensure the service has loaded model checkpoints successfully.",
+            solution: "Verify text is not empty. Check OpenAudio service logs with: docker logs openaudio_api. Ensure the service has loaded model checkpoints successfully.",
           },
           {
             problem: "Voice cloning not working",

@@ -149,7 +149,7 @@ Set the following environment variables (or update `.env`) to enable the integra
 | `FASTER_WHISPER_MODEL_SIZE` | Model size used when running Faster Whisper locally (e.g. `tiny`, `base`, `large-v3`). |
 | `FASTER_WHISPER_DEVICE` | Device to use for Faster Whisper inference (e.g. `cpu`, `cuda`). |
 | `FASTER_WHISPER_COMPUTE_TYPE` | Compute type for Faster Whisper inference (e.g. `int8`, `float16`, `float32`). |
-| `OPENAUDIO_API_BASE` | Base URL for the OpenAudio deployment (defaults to `http://localhost:8080`). |
+| `OPENAUDIO_API_BASE` | Base URL for the OpenAudio deployment (defaults to `http://localhost:21251`). |
 | `OPENAUDIO_API_KEY` | Bearer token forwarded to OpenAudio when authentication is required. |
 | `OPENAUDIO_TTS_PATH` | Path to the OpenAudio synthesis endpoint (defaults to `/v1/tts`). |
 | `OPENAUDIO_DEFAULT_FORMAT` | Default audio container (`wav`, `mp3`, etc.). |
@@ -265,7 +265,7 @@ This repository uses [Git LFS](https://git-lfs.github.com/) to manage large mode
 
 
 
-The entire application stack, including the `backend` service and the `openaudio` TTS service, is managed via Docker Compose. This is the recommended way to run the application for both development and production.
+The entire application stack, including the `backend` service, the upstream `openaudio_api` container, and the official `openaudio_webui` Gradio experience, is managed via Docker Compose. This is the recommended way to run the application for both development and production so that `/v1/tts` talks directly to the maintained OpenAudio-S1-mini backend.
 
 
 
@@ -290,6 +290,14 @@ Before starting the services, you need to download the OpenAudio-S1-mini model w
 
 
 2.  Download the model weights from the [OpenAudio-S1-mini Hugging Face repository](https://huggingface.co/fishaudio/OpenAudio-S1-mini) and place them in the `backend/openaudio-checkpoints` directory.
+
+With the checkpoints in place, `docker compose up -d` will start:
+
+- `gemma_service` – the FastAPI backend that exposes `/v1/*`.
+- `openaudio_api` – the upstream OpenAudio API server that serves `/v1/tts` at `http://localhost:21251`.
+- `openaudio_webui` – the official Gradio Web UI from the Fish Audio repository, exposed at `http://localhost:27860` for manual synthesis tests.
+
+Both OpenAudio containers share the same checkpoints/references volume so you can try voices in the Web UI and immediately reuse the same assets through the API.
 
 
 

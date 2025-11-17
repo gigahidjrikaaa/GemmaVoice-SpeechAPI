@@ -37,8 +37,8 @@ The requirements include `openai-whisper` for optional on-device transcription a
 ## Configuring OpenAudio-S1-mini
 
 1. Download the OpenAudio-S1-mini checkpoint from the [Fish Audio release](https://huggingface.co/fishaudio/OpenAudio-S1-mini) and place it in a directory accessible to the API (the Compose file mounts `./openaudio-checkpoints`).
-2. Start the OpenAudio API server by running `python -m tools.api_server --model OpenAudio-S1-mini --compile --host 0.0.0.0 --port 8080` inside the upstream repository, or reuse the optional `openaudio` service defined in `docker-compose.yml`.
-3. Set `OPENAUDIO_API_BASE` to the reachable base URL (defaults to `http://openaudio:8080`) and provide an API key via `OPENAUDIO_API_KEY` if your deployment enforces authentication.
+2. Start the OpenAudio API server by running `python -m tools.api_server --model OpenAudio-S1-mini --compile --host 0.0.0.0 --port 21251` inside the upstream repository, or reuse the `openaudio_api` service defined in `docker-compose.yml`.
+3. Set `OPENAUDIO_API_BASE` to the reachable base URL (defaults to `http://openaudio_api:21251`) and provide an API key via `OPENAUDIO_API_KEY` if your deployment enforces authentication.
 
 The API expects the `/v1/tts` route exposed by the upstream server. Streaming synthesis requires the deployment to support HTTP chunked responses.
 
@@ -60,7 +60,7 @@ The API expects the `/v1/tts` route exposed by the upstream server. Streaming sy
 | `ENABLE_LOCAL_WHISPER` | Toggle on-device Whisper inference. Requires FFmpeg and the `openai-whisper` package. |
 | `LOCAL_WHISPER_MODEL` | Whisper checkpoint to load in local mode. |
 | `OPENAUDIO_API_KEY` | Authentication token forwarded to OpenAudio deployments. |
-| `OPENAUDIO_API_BASE` | Base URL of the OpenAudio API (e.g. `http://openaudio:8080`). |
+| `OPENAUDIO_API_BASE` | Base URL of the OpenAudio API (e.g. `http://openaudio_api:21251`). |
 | `OPENAUDIO_TTS_PATH` | Speech synthesis path appended to the base URL (defaults to `/v1/tts`). |
 | `OPENAUDIO_DEFAULT_FORMAT` | Default output format (e.g. `wav`, `mp3`). |
 | `OPENAUDIO_DEFAULT_REFERENCE_ID` | Default reference identifier forwarded to OpenAudio when none is supplied. |
@@ -104,7 +104,7 @@ Then add the following volume mapping inside `docker-compose.yml` if you want ca
       - ${WHISPER_CACHE:-~/.cache/whisper}:/home/appuser/.cache/whisper
 ```
 
-The Compose file already provisions an `openaudio` service based on the upstream Fish Audio image. Point `OPENAUDIO_API_BASE` at `http://openaudio:8080` (the default) or adjust the environment variables to match your custom deployment.
+The Compose file already provisions an `openaudio_api` service based on the upstream Fish Audio image. Point `OPENAUDIO_API_BASE` at `http://openaudio_api:21251` (the default) or adjust the environment variables to match your custom deployment. A companion `openaudio_webui` container launches the official Gradio UI on `http://localhost:27860` for manual synthesis tests using the same checkpoints.
 
 ## Running locally without Docker
 

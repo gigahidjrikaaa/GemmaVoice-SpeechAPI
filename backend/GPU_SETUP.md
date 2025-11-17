@@ -192,10 +192,11 @@ The services will automatically use the correct mode based on these variables.
 ## 🆘 Still Having Issues?
 
 1. **Check Docker logs:**
-   ```bash
-   docker compose logs gemma_service
-   docker compose logs openaudio
-   ```
+```bash
+docker compose logs gemma_service
+docker compose logs openaudio_api
+docker compose logs openaudio_webui
+```
 
 2. **Verify GPU availability:**
    ```bash

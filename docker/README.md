@@ -58,7 +58,7 @@ docker compose -f docker-compose.prod.yml -f docker-compose.monitoring.yml up -d
 
 ### OpenAudio Service
 
-- **Architecture:** Uses official `fishaudio/fish-speech` Docker images
+- **Architecture:** Uses the official `fishaudio/fish-speech` Docker images for both the API server and the upstream Gradio Web UI.
 - **Images:** 
   - GPU: `fishaudio/fish-speech:server-cuda`
   - CPU: `fishaudio/fish-speech:server-cpu`
@@ -69,20 +69,21 @@ docker compose -f docker-compose.prod.yml -f docker-compose.monitoring.yml up -d
   - All dependencies pre-installed
   - Official support from Fish Audio team
   - Automatic environment setup via entrypoint
+  - Web UI is kept in lockstep with the API backend
 
 ### `docker-compose.yml`
 
 - **Purpose:** Local development with GPU acceleration
-- **Services:** gemma_service, openaudio
-- **GPU:** Enabled for both services
-- **Ports:** 6666 (API), 8080 (TTS)
+- **Services:** `gemma_service`, `openaudio_api`, `openaudio_webui`
+- **GPU:** Enabled for the API and Web UI containers
+- **Ports:** 6666 (FastAPI), 21251 (OpenAudio API), 27860 (OpenAudio Web UI)
 
 ### `docker-compose.cpu.yml`
 
 - **Purpose:** CPU-only mode for systems without GPU
 - **GPU:** Disabled
 - **Compute:** Faster-Whisper uses int8 quantization for CPU
-- **Use case:** Windows/WSL without NVIDIA drivers
+- **Use case:** Windows/WSL without NVIDIA drivers, optional Web UI also runs in CPU mode
 
 ### `docker-compose.prod.yml`
 
@@ -129,7 +130,8 @@ This structure allows:
 cd docker/
 docker compose logs -f
 docker compose logs -f gemma_service
-docker compose logs -f openaudio
+docker compose logs -f openaudio_api
+docker compose logs -f openaudio_webui
 ```
 
 ### Restart Services

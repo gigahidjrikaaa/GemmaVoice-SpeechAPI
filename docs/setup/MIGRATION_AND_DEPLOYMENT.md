@@ -22,7 +22,8 @@ Successfully migrated services to standardized port configuration:
 | Service | Old Port | New Port | Description |
 |---------|----------|----------|-------------|
 | Gemma Service | 6666 | 21250 | LLM backend API |
-| OpenAudio Service | 8080 | 21251 | TTS service |
+| OpenAudio Service | 8080 | 21251 | TTS REST API |
+| OpenAudio Web UI | - | 27860 | Official Gradio frontend |
 | Frontend Dev | 5173 | 5173-5174 | Vite dev server (auto-increment) |
 
 ### Changes Made
@@ -66,9 +67,9 @@ services:
     ports:
       - "21250:6666"  # Map host 21250 to container 6666
     environment:
-      - OPENAUDIO_API_BASE=http://openaudio:21251
-  
-  openaudio:
+      - OPENAUDIO_API_BASE=http://openaudio_api:21251
+
+  openaudio_api:
     ports:
       - "21251:21251"  # Direct port mapping
 ```
@@ -78,7 +79,7 @@ services:
 # Port configuration
 api_host: str = Field(default="0.0.0.0")
 api_port: int = Field(default=6666)  # Internal port
-openaudio_api_base: str = Field(default="http://openaudio:21251")
+openaudio_api_base: str = Field(default="http://openaudio_api:21251")
 ```
 
 ### API Endpoints Verification
@@ -181,9 +182,10 @@ Fish Speech project doesn't publish versioned tags like `1.5.0`. Available tags:
 **Solution:**
 ```yaml
 # docker/docker-compose.yml (before custom Dockerfile)
-openaudio:
+openaudio_api:
   image: fishaudio/fish-speech:latest  # Changed from 1.5.0
   # ... rest of config
+# docker/openaudio.Dockerfile
 ```
 
 **Current Setup (Custom Dockerfile):**
@@ -249,7 +251,7 @@ LLM_CONTEXT_SIZE=8192
 LLM_MAX_TOKENS=2048
 
 # OpenAudio Configuration
-OPENAUDIO_API_BASE=http://openaudio:21251
+OPENAUDIO_API_BASE=http://openaudio_api:21251
 OPENAUDIO_ENABLED=true
 
 # Scalar Documentation
@@ -275,7 +277,7 @@ services:
     ports:
       - "21250:6666"  # Host:Container
   
-  openaudio:
+  openaudio_api:
     ports:
       - "21251:21251"
   
@@ -394,7 +396,7 @@ Error: Cannot load checkpoint from /app/checkpoints/...
 **Solutions:**
 1. **Verify checkpoints exist:**
    ```bash
-   docker exec openaudio ls -la /app/checkpoints/OpenAudio-S1-mini/
+  docker exec openaudio_api ls -la /app/checkpoints/OpenAudio-S1-mini/
    # Should list 5 files
    ```
 
@@ -415,7 +417,7 @@ Error: Cannot load checkpoint from /app/checkpoints/...
    ```bash
    cd docker
    docker compose down
-   docker compose build --no-cache openaudio
+  docker compose build --no-cache openaudio_api
    docker compose up -d
    ```
 
@@ -434,7 +436,7 @@ FROM fishaudio/fish-speech:latest
 
 Then rebuild:
 ```bash
-docker compose build --pull openaudio
+docker compose build --pull openaudio_api
 docker compose up -d
 ```
 

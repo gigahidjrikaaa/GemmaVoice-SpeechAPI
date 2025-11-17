@@ -40,7 +40,7 @@ class _FakeAsyncClient:
 @pytest.mark.asyncio
 async def test_synthesize_stream_sets_stream_flag() -> None:
     settings = Settings(
-        openaudio_api_base="http://localhost:8080",
+        openaudio_api_base="http://localhost:21251",
         openaudio_tts_path="/v1/tts",
         openaudio_max_retries=1,
     )

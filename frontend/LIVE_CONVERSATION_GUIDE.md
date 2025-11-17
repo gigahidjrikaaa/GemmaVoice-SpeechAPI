@@ -334,7 +334,7 @@ You are a creative writing assistant. Be imaginative and descriptive.
 ### Issue: No voice responses
 **Solution:**
 - Check "Voice responses" is enabled
-- Verify OpenAudio service is running on port 8080
+- Verify OpenAudio service is running on port 21251
 - Check browser console for TTS errors
 
 ### Issue: Poor transcription quality

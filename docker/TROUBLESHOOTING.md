@@ -18,16 +18,16 @@ The Dockerfile has been updated to install `uvicorn` and `fastapi`. Rebuild the 
 
 ```bash
 cd docker
-docker compose build --no-cache openaudio-service
-docker compose up -d openaudio-service
+docker compose build --no-cache openaudio_api
+docker compose up -d openaudio_api
 ```
 
 **Verify the fix:**
 ```bash
-docker compose logs -f openaudio-service
+docker compose logs -f openaudio_api
 ```
 
-You should see the server starting on port 8080.
+You should see the server starting on port 21251.
 
 ---
 
@@ -80,13 +80,13 @@ chmod +x fix-containers.sh
 
 3. **Rebuild and restart:**
    ```bash
-   docker compose build --no-cache gemma-service
+   docker compose build --no-cache gemma_service
    docker compose up -d
    ```
 
 4. **Monitor the download:**
    ```bash
-   docker compose logs -f gemma-service
+   docker compose logs -f gemma_service
    ```
 
 **Verify the fix:**
@@ -113,13 +113,14 @@ docker compose logs -f
 
 ### View logs for specific service
 ```bash
-docker compose logs -f gemma-service
-docker compose logs -f openaudio-service
+docker compose logs -f gemma_service
+docker compose logs -f openaudio_api
+docker compose logs -f openaudio_webui
 ```
 
 ### Restart a specific service
 ```bash
-docker compose restart gemma-service
+docker compose restart gemma_service
 ```
 
 ### Full reset (nuclear option)
@@ -157,7 +158,7 @@ Before running the containers, ensure:
 - [ ] **Sufficient disk space** (>20GB for model + containers)
 - [ ] **Internet connection** for model download
 - [ ] **GPU drivers** installed (for CUDA containers)
-- [ ] **Ports available:** 6666 (Gemma), 8080 (OpenAudio), 5173 (Frontend)
+- [ ] **Ports available:** 6666 (Gemma), 21251 (OpenAudio API), 27860 (OpenAudio Web UI), 5173 (Frontend)
 - [ ] **OpenAudio checkpoints** downloaded to `backend/openaudio-checkpoints/`
 
 ---
@@ -191,6 +192,8 @@ Before running the containers, ensure:
 6. **Access the app:**
    - API: http://localhost:6666
    - Docs: http://localhost:6666/docs
+   - Text-to-speech backend (for direct tests): http://localhost:21251/v1/tts
+   - OpenAudio Web UI: http://localhost:27860
    - Frontend: http://localhost:5173
 
 ---

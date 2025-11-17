@@ -207,7 +207,7 @@ Add volume mount for reference voices:
 
 ```yaml
 services:
-  openaudio:
+  openaudio_api:
     build:
       context: ..
       dockerfile: backend/openaudio.Dockerfile
@@ -475,7 +475,7 @@ asyncio.run(stream_voice_clone())
 
 **Check logs:**
 ```bash
-docker logs openaudio
+docker logs openaudio_api
 ```
 
 **Common fixes:**

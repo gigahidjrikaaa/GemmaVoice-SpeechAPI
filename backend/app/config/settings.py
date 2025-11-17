@@ -155,7 +155,7 @@ class Settings(BaseSettings):
         description="Authentication token forwarded to the OpenAudio-S1-mini API.",
     )
     openaudio_api_base: str = Field(
-        default="http://localhost:8080",
+        default="http://localhost:21251",
         alias="OPENAUDIO_API_BASE",
         description="Base URL for the OpenAudio-S1-mini inference server.",
     )

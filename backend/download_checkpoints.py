@@ -106,7 +106,7 @@ def main():
     print()
     print("🚀 Next steps:")
     print("  1. Run: docker compose up --build")
-    print("  2. Test: curl -X POST http://localhost:8080/v1/tts \\")
+    print("  2. Test: curl -X POST http://localhost:21251/v1/tts \\")
     print("           -H 'Content-Type: application/json' \\")
     print("           -d '{\"text\": \"Hello world\", \"format\": \"wav\"}' \\")
     print("           --output test.wav")

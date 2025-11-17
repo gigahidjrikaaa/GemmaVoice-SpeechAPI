@@ -351,7 +351,7 @@ docker compose logs gemma_service -f
 docker compose logs frontend -f
 
 # OpenAudio logs
-docker compose logs openaudio -f
+docker compose logs openaudio_api -f
 
 # All services
 docker compose logs -f
@@ -507,7 +507,7 @@ curl -v http://localhost:6666/health
 **Solution:**
 ```bash
 # Stop OpenAudio if not needed
-docker compose stop openaudio
+docker compose stop openaudio_api
 
 # Or reduce model sizes in .env.production
 FASTER_WHISPER_MODEL_SIZE=tiny

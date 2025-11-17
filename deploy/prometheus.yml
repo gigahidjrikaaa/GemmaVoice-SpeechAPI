@@ -41,7 +41,7 @@ scrape_configs:
   # Scrape OpenAudio Service (if it exposes metrics)
   - job_name: 'openaudio'
     static_configs:
-      - targets: ['openaudio:8080']
+      - targets: ['openaudio_api:21251']
         labels:
           service: 'tts'
           component: 'openaudio'

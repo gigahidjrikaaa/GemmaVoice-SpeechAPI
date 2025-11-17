@@ -47,7 +47,7 @@ services:
       - LLM_MAX_TOKENS=${LLM_MAX_TOKENS:-2048}
       
       # OpenAudio (Text-to-Speech)
-      - OPENAUDIO_API_BASE=http://openaudio:21251
+      - OPENAUDIO_API_BASE=http://openaudio_api:21251
       - OPENAUDIO_DEFAULT_FORMAT=${OPENAUDIO_DEFAULT_FORMAT:-wav}
       - OPENAUDIO_DEFAULT_NORMALIZE=${OPENAUDIO_DEFAULT_NORMALIZE:-true}
       - OPENAUDIO_TIMEOUT_SECONDS=${OPENAUDIO_TIMEOUT_SECONDS:-120}
@@ -69,6 +69,8 @@ services:
     
     ports:
       - "${BACKEND_PORT:-21250}:6666"
+    depends_on:
+      - openaudio_api
     
     networks:
       - gemma_network
@@ -89,9 +91,9 @@ services:
   # ==========================================================================
   # OpenAudio Service (Text-to-Speech)
   # ==========================================================================
-  openaudio:
+  openaudio_api:
     image: fishaudio/fish-speech:server-cuda
-    container_name: openaudio
+    container_name: openaudio_api
     restart: unless-stopped
     
     volumes:
@@ -127,6 +129,69 @@ services:
       retries: 3
       start_period: 120s
     
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ==========================================================================
+  # OpenAudio Web UI (Official Gradio interface)
+  # ==========================================================================
+  openaudio_webui:
+    image: fishaudio/fish-speech:server-cuda
+    container_name: openaudio_webui
+    restart: unless-stopped
+
+    depends_on:
+      - openaudio_api
+
+    volumes:
+      - openaudio-checkpoints:/app/checkpoints:ro
+      - openaudio-references:/app/references
+
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+        limits:
+          cpus: '4'
+          memory: 8G
+
+    environment:
+      - GRADIO_SERVER_NAME=0.0.0.0
+      - GRADIO_SERVER_PORT=7860
+
+    command:
+      [
+        "python3",
+        "-m",
+        "tools.run_webui",
+        "--llama-checkpoint-path",
+        "checkpoints/OpenAudio-S1-mini",
+        "--decoder-checkpoint-path",
+        "checkpoints/OpenAudio-S1-mini/codec.pth",
+        "--decoder-config-name",
+        "modded_dac_vq",
+        "--compile",
+      ]
+
+    networks:
+      - gemma_network
+
+    ports:
+      - "${OPENAUDIO_WEBUI_PORT:-27860}:7860"
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:7860"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
+
     logging:
       driver: "json-file"
       options:

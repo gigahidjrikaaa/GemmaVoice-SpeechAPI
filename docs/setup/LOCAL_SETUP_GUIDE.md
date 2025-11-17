@@ -154,7 +154,7 @@ FASTER_WHISPER_DEVICE=cuda            # GPU acceleration
 FASTER_WHISPER_COMPUTE_TYPE=float16   # GPU optimal
 
 # OpenAudio (Text-to-Speech) - FULLY LOCAL
-OPENAUDIO_API_BASE=http://openaudio:8080
+OPENAUDIO_API_BASE=http://openaudio_api:21251
 OPENAUDIO_DEFAULT_FORMAT=wav
 OPENAUDIO_DEFAULT_NORMALIZE=true
 
@@ -211,7 +211,10 @@ docker ps
 # Expected output:
 # CONTAINER ID   IMAGE              STATUS         PORTS                    NAMES
 # xxxxxxxxxxxx   backend        Up 2 minutes   0.0.0.0:6666->6666/tcp   gemma_service
-# xxxxxxxxxxxx   openaudio          Up 2 minutes   0.0.0.0:8080->8080/tcp   openaudio
+# xxxxxxxxxxxx   openaudio_api      Up 2 minutes   0.0.0.0:21251->21251/tcp   openaudio_api
+# yyyyyyyyyyyy   openaudio_webui    Up 2 minutes   0.0.0.0:27860->7860/tcp   openaudio_webui
+
+The Web UI is exposed at `http://localhost:27860` and uses the same checkpoints as the API container.
 ```
 
 ### 2. Test Gemma Service
@@ -234,7 +237,7 @@ curl -X POST http://localhost:6666/v1/generate \
 
 ```bash
 # Test TTS directly on OpenAudio container
-curl -X POST http://localhost:8080/v1/tts \
+curl -X POST http://localhost:21251/v1/tts \
   -H "Content-Type: application/json" \
   -d '{
     "text": "Hello world, this is a test of the OpenAudio text to speech system.",
@@ -321,7 +324,7 @@ Navigate to: http://localhost:5173
 
 **Check logs:**
 ```bash
-docker logs openaudio
+docker logs openaudio_api
 ```
 
 **Common issues:**
