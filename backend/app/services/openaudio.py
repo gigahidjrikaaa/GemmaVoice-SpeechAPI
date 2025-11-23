@@ -96,6 +96,11 @@ class OpenAudioService:
         normalize: Optional[bool] = None,
         references: Optional[Sequence[str]] = None,
         top_p: Optional[float] = None,
+        temperature: Optional[float] = None,
+        chunk_length: Optional[int] = None,
+        latency: Optional[str] = None,
+        speed: Optional[float] = None,
+        volume: Optional[float] = None,
     ) -> OpenAudioSynthesisResult:
         """Perform blocking TTS synthesis."""
 
@@ -108,6 +113,11 @@ class OpenAudioService:
             normalize=normalize,
             references=references,
             top_p=top_p,
+            temperature=temperature,
+            chunk_length=chunk_length,
+            latency=latency,
+            speed=speed,
+            volume=volume,
         )
 
         headers = self._auth_headers()
@@ -185,6 +195,11 @@ class OpenAudioService:
         normalize: Optional[bool] = None,
         references: Optional[Sequence[str]] = None,
         top_p: Optional[float] = None,
+        temperature: Optional[float] = None,
+        chunk_length: Optional[int] = None,
+        latency: Optional[str] = None,
+        speed: Optional[float] = None,
+        volume: Optional[float] = None,
     ) -> OpenAudioSynthesisStream:
         """Return an asynchronous iterator that streams synthesis bytes."""
 
@@ -197,6 +212,11 @@ class OpenAudioService:
             normalize=normalize,
             references=references,
             top_p=top_p,
+            temperature=temperature,
+            chunk_length=chunk_length,
+            latency=latency,
+            speed=speed,
+            volume=volume,
         )
         payload["streaming"] = True
         headers = self._auth_headers()
@@ -267,6 +287,11 @@ class OpenAudioService:
         normalize: Optional[bool],
         references: Optional[Sequence[str]],
         top_p: Optional[float],
+        temperature: Optional[float],
+        chunk_length: Optional[int],
+        latency: Optional[str],
+        speed: Optional[float],
+        volume: Optional[float],
     ) -> Dict[str, Any]:
         payload: Dict[str, Any] = {
             "text": text,
@@ -287,6 +312,20 @@ class OpenAudioService:
             payload["references"] = list(references)
         if top_p is not None:
             payload["top_p"] = top_p
+        if temperature is not None:
+            payload["temperature"] = temperature
+        if chunk_length is not None:
+            payload["chunk_length"] = chunk_length
+        if latency is not None:
+            payload["latency"] = latency
+
+        prosody: Dict[str, Any] = {}
+        if speed is not None:
+            prosody["speed"] = speed
+        if volume is not None:
+            prosody["volume"] = volume
+        if prosody:
+            payload["prosody"] = prosody
 
         return payload
 

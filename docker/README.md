@@ -12,6 +12,11 @@ docker/
 ├── docker-compose.prod.yml         # Production configuration
 ├── docker-compose.test.yml         # Integration testing
 └── docker-compose.monitoring.yml   # Observability stack (Prometheus, Grafana, Loki)
+`
+
+Additional helper:
+
+- rontend.Dockerfile - multi-stage Node/Nginx image that builds the React playground for Compose runs.
 ```
 
 **Note:** The `openaudio.Dockerfile` has been removed. OpenAudio now uses the official `fishaudio/fish-speech` Docker images.
@@ -74,16 +79,16 @@ docker compose -f docker-compose.prod.yml -f docker-compose.monitoring.yml up -d
 ### `docker-compose.yml`
 
 - **Purpose:** Local development with GPU acceleration
-- **Services:** `gemma_service`, `openaudio_api`, `openaudio_webui`
-- **GPU:** Enabled for the API and Web UI containers
-- **Ports:** 6666 (FastAPI), 21251 (OpenAudio API), 27860 (OpenAudio Web UI)
+- **Services:** `gemma_service`, `openaudio_api`, `openaudio_webui`, `frontend`
+- **GPU:** Enabled for the API and OpenAudio containers; the frontend runs on CPU-only Nginx
+- **Ports:** 6666 (FastAPI), 21251 (OpenAudio API), 27860 (OpenAudio Web UI), 5173 (Frontend playground)
 
 ### `docker-compose.cpu.yml`
 
 - **Purpose:** CPU-only mode for systems without GPU
 - **GPU:** Disabled
 - **Compute:** Faster-Whisper uses int8 quantization for CPU
-- **Use case:** Windows/WSL without NVIDIA drivers, optional Web UI also runs in CPU mode
+- **Use case:** Windows/WSL without NVIDIA drivers, optional Web UI also runs in CPU mode while the React frontend is still served via Nginx
 
 ### `docker-compose.prod.yml`
 

@@ -53,8 +53,7 @@ export function DialoguePanel() {
     try {
       const { data } = await apiFetch<DialogueResponse>(config, "/v1/dialogue", {
         method: "POST",
-        body: form,
-        parseJson: true
+        body: form
       });
       setResult(data);
       if (data.audio_base64) {

@@ -47,9 +47,22 @@ async def generate_text(
 
     logger.info("Generating text for prompt: '%s...'", payload.prompt[:50])
 
+    # Auto-apply Gemma 3 chat template if raw text is provided
+    prompt = payload.prompt
+    if "<start_of_turn>" not in prompt:
+        prompt = (
+            f"<start_of_turn>user\n"
+            f"{prompt}<end_of_turn>\n"
+            f"<start_of_turn>model\n"
+        )
+        logger.info("Applied Gemma 3 chat template to raw prompt")
+
+    # Create a copy of params with the updated prompt
     generation_params = payload.model_dump(exclude_unset=True)
+    generation_params["prompt"] = prompt
     try:
         output = llm_service.model(**generation_params)
+        logger.info("Raw LLM output: %s", output)
     except Exception as exc:  # pragma: no cover - llama.cpp errors
         logger.exception("Error during text generation")
         raise HTTPException(status_code=500, detail="Failed to generate text.") from exc

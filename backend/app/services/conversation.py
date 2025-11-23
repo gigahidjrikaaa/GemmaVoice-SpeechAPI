@@ -126,8 +126,17 @@ class ConversationService:
         user_text = transcription_text.strip() or "(no transcript available)"
         if instructions:
             instructions_clean = instructions.strip()
-            return f"{instructions_clean}\n\nUser: {user_text}\nAssistant:"
-        return f"User: {user_text}\nAssistant:"
+            return (
+                f"<start_of_turn>user\n"
+                f"{instructions_clean}\n\n"
+                f"{user_text}<end_of_turn>\n"
+                f"<start_of_turn>model\n"
+            )
+        return (
+            f"<start_of_turn>user\n"
+            f"{user_text}<end_of_turn>\n"
+            f"<start_of_turn>model\n"
+        )
 
     @staticmethod
     def _build_generation_request(

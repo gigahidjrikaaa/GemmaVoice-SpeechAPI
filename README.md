@@ -265,7 +265,7 @@ This repository uses [Git LFS](https://git-lfs.github.com/) to manage large mode
 
 
 
-The entire application stack, including the `backend` service, the upstream `openaudio_api` container, and the official `openaudio_webui` Gradio experience, is managed via Docker Compose. This is the recommended way to run the application for both development and production so that `/v1/tts` talks directly to the maintained OpenAudio-S1-mini backend.
+The entire application stack—including `gemma_service`, the upstream `openaudio_api` container, the official `openaudio_webui` Gradio experience, and the React playground frontend—is managed via Docker Compose. This is the recommended way to run the application for both development and production so that `/v1/tts` talks directly to the maintained OpenAudio-S1-mini backend while the UI stays in sync with the running API.
 
 
 
@@ -296,6 +296,7 @@ With the checkpoints in place, `docker compose up -d` will start:
 - `gemma_service` – the FastAPI backend that exposes `/v1/*`.
 - `openaudio_api` – the upstream OpenAudio API server that serves `/v1/tts` at `http://localhost:21251`.
 - `openaudio_webui` – the official Gradio Web UI from the Fish Audio repository, exposed at `http://localhost:27860` for manual synthesis tests.
+- `frontend` – the Vite + React playground compiled into a static bundle and served via Nginx on `http://localhost:5173`.
 
 Both OpenAudio containers share the same checkpoints/references volume so you can try voices in the Web UI and immediately reuse the same assets through the API.
 

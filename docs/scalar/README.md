@@ -256,7 +256,7 @@ The `openapi.yaml` includes detailed documentation for OpenAudio integration:
 
 **Direct OpenAudio (Advanced):**
 - `POST http://localhost:21251/v1/tts` - Direct TTS
-- `GET http://localhost:21251/health` - Health check
+- `GET http://localhost:21251/v1/health` - Health check
 
 ### Voice Cloning Example
 

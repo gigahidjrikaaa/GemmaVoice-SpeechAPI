@@ -171,6 +171,11 @@ async def text_to_speech(
             normalize=payload.normalize,
             references=payload.references,
             top_p=payload.top_p,
+            temperature=payload.temperature,
+            chunk_length=payload.chunk_length,
+            latency=payload.latency,
+            speed=payload.speed,
+            volume=payload.volume,
         )
 
         async def iterator() -> AsyncIterator[bytes]:
@@ -193,6 +198,11 @@ async def text_to_speech(
         normalize=payload.normalize,
         references=payload.references,
         top_p=payload.top_p,
+        temperature=payload.temperature,
+        chunk_length=payload.chunk_length,
+        latency=payload.latency,
+        speed=payload.speed,
+        volume=payload.volume,
     )
 
     return SpeechSynthesisResponse(
@@ -379,6 +389,11 @@ async def text_to_speech_ws(websocket: WebSocket) -> None:
                 "normalize": payload.get("normalize"),
                 "references": payload.get("references"),
                 "top_p": payload.get("top_p"),
+                "temperature": payload.get("temperature"),
+                "chunk_length": payload.get("chunk_length"),
+                "latency": payload.get("latency"),
+                "speed": payload.get("speed"),
+                "volume": payload.get("volume"),
             }
 
             try:

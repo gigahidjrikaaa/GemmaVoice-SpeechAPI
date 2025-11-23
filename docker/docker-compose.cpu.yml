@@ -61,7 +61,7 @@ services:
     ports:
       - "21251:21251"
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:21251/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:21251/v1/health"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -79,17 +79,12 @@ services:
     environment:
       - GRADIO_SERVER_NAME=0.0.0.0
       - GRADIO_SERVER_PORT=7860
+    entrypoint: []
     command:
       [
-        "python3",
-        "-m",
-        "tools.run_webui",
-        "--llama-checkpoint-path",
-        "checkpoints/OpenAudio-S1-mini",
-        "--decoder-checkpoint-path",
-        "checkpoints/OpenAudio-S1-mini/codec.pth",
-        "--decoder-config-name",
-        "modded_dac_vq",
+        "/bin/bash",
+        "-lc",
+        "pip install --no-cache-dir --break-system-packages pyrootutils torch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1 loguru fastapi uvicorn kui tyro pydantic ormsgpack hydra-core==1.3.2 python-dotenv markdown-it-py --index-url https://download.pytorch.org/whl/cpu && python3 -m tools.run_webui --llama-checkpoint-path checkpoints/OpenAudio-S1-mini --decoder-checkpoint-path checkpoints/OpenAudio-S1-mini/codec.pth --decoder-config-name modded_dac_vq",
       ]
     networks:
       - shared_services_network
@@ -101,6 +96,30 @@ services:
       timeout: 10s
       retries: 3
       start_period: 120s
+
+  frontend:
+    build:
+      context: ../frontend
+      dockerfile: ../docker/frontend.Dockerfile
+      args:
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:21250}
+        VITE_API_KEY: ${VITE_API_KEY:-}
+    image: gemma-voice-frontend
+    container_name: gemma_frontend
+    restart: unless-stopped
+    depends_on:
+      gemma_service:
+        condition: service_healthy
+    ports:
+      - "5173:80"
+    networks:
+      - shared_services_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
 
 networks:
   shared_services_network:

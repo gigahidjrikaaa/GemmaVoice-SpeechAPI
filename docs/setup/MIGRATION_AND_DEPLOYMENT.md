@@ -118,7 +118,7 @@ curl -X POST http://localhost:21250/v1/text-to-speech \
 
 **Direct Health Check:**
 ```bash
-curl http://localhost:21251/health
+curl http://localhost:21251/v1/health
 # Response: {"status": "ok"}
 ```
 
