@@ -122,6 +122,16 @@ class Settings(BaseSettings):
         alias="LLM_CONTEXT_SIZE",
         description="Maximum context window forwarded to llama.cpp.",
     )
+    llm_request_timeout: PositiveFloat = Field(
+        default=120.0,
+        alias="LLM_REQUEST_TIMEOUT",
+        description="Timeout in seconds for LLM generation requests.",
+    )
+    llm_stream_chunk_size: PositiveInt = Field(
+        default=1,
+        alias="LLM_STREAM_CHUNK_SIZE",
+        description="Number of tokens to buffer before sending in streaming mode.",
+    )
 
     # Speech configuration (Phase 2 integrations)
     openai_api_key: Optional[str] = Field(

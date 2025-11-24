@@ -1,5 +1,6 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useClientConfig } from "../context/ConfigContext";
+import { useCode } from "../context/CodeContext";
 import { apiFetch, apiFetchStream } from "../lib/apiClient";
 import { base64ToBlob } from "../lib/audioUtils";
 import { useVoiceCloning } from "../hooks/useVoiceCloning";
@@ -7,6 +8,7 @@ import { VoiceCloningInput } from "./VoiceCloningInput";
 import { useToast } from "./Toast";
 import { InstructionsPanel } from "./InstructionsPanel";
 import { errorLogger } from "../lib/errorLogger";
+import { Play, Download, Volume2, Mic, Music, Radio } from "lucide-react";
 
 type SpeechResponse = {
   audio_base64?: string;
@@ -44,12 +46,14 @@ const PARAM_HELP = {
 
 export function SynthesisPanel() {
   const { config } = useClientConfig();
+  const { setSnippet } = useCode();
   const { push } = useToast();
   const [request, setRequest] = useState(defaultRequest);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [streamLog, setStreamLog] = useState<StreamEvent[]>([]);
   const [objectUrl, setObjectUrl] = useState<string | null>(null);
-  
+  const [isGenerating, setIsGenerating] = useState(false);
+
   // Use shared voice cloning hook
   const voiceCloning = useVoiceCloning();
 
@@ -61,27 +65,44 @@ export function SynthesisPanel() {
     };
   }, [objectUrl]);
 
+  // Update code snippet
+  useEffect(() => {
+    const curl = `curl -X POST ${config.baseUrl}/v1/text-to-speech \\
+  -H "Content-Type: application/json" \\
+  -d '${JSON.stringify({
+      ...request,
+      stream: false,
+      references: voiceCloning.useVoiceCloning ? ["<base64_audio_data>"] : undefined,
+      reference_id: voiceCloning.useVoiceCloning ? undefined : request.reference_id
+    }, null, 2)}'`;
+
+    setSnippet({
+      language: "bash",
+      code: curl,
+      title: "Text-to-Speech Request"
+    });
+  }, [request, voiceCloning.useVoiceCloning, config.baseUrl, setSnippet]);
+
   const headers = useMemo(() => ({ "Content-Type": "application/json" }), []);
 
   const runSynthesis = async (event: FormEvent) => {
     event.preventDefault();
     setStreamLog([]);
+    setIsGenerating(true);
     try {
       // Get base64 encoded references from voice cloning hook
       const references = await voiceCloning.getReferences();
-      errorLogger.logInfo('Starting text-to-speech synthesis', { 
+      errorLogger.logInfo('Starting text-to-speech synthesis', {
         textLength: request.text.length,
         format: request.format,
-        sampleRate: request.sample_rate,
-        useVoiceCloning: voiceCloning.useVoiceCloning,
-        referencesCount: references.length
+        useVoiceCloning: voiceCloning.useVoiceCloning
       });
 
       const { data } = await apiFetch<SpeechResponse>(config, "/v1/text-to-speech", {
         method: "POST",
         headers,
-        body: JSON.stringify({ 
-          ...request, 
+        body: JSON.stringify({
+          ...request,
           stream: false,
           references: references.length > 0 ? references : undefined,
           reference_id: voiceCloning.useVoiceCloning && references.length > 0 ? undefined : request.reference_id
@@ -96,19 +117,14 @@ export function SynthesisPanel() {
         }
         setObjectUrl(url);
         setAudioUrl(url);
-        errorLogger.logInfo('Synthesis completed', { 
-          audioBlobSize: blob.size,
-          format 
-        });
       }
       push({ title: "Synthesis complete" });
     } catch (error) {
-      errorLogger.logError(error, '/v1/text-to-speech', { 
-        textLength: request.text.length,
-        format: request.format 
-      });
+      errorLogger.logError(error, '/v1/text-to-speech');
       const userMessage = errorLogger.getUserFriendlyMessage(error);
       push({ title: "Synthesis failed", description: userMessage, variant: "error" });
+    } finally {
+      setIsGenerating(false);
     }
   };
 
@@ -119,36 +135,39 @@ export function SynthesisPanel() {
       setObjectUrl(null);
     }
     setAudioUrl(null);
+    setIsGenerating(true);
+
+    const curl = `curl -N -X POST ${config.baseUrl}/v1/text-to-speech \\
+  -H "Content-Type: application/json" \\
+  -d '${JSON.stringify({
+      ...request,
+      stream: true,
+      references: voiceCloning.useVoiceCloning ? ["<base64_audio_data>"] : undefined
+    }, null, 2)}'`;
+
+    setSnippet({
+      language: "bash",
+      code: curl,
+      title: "Streaming TTS Request"
+    });
+
     const chunks: ArrayBuffer[] = [];
     try {
-      // Get references from voice cloning hook
       const references = await voiceCloning.getReferences();
-      errorLogger.logInfo('Starting streaming text-to-speech synthesis', { 
-        textLength: request.text.length,
-        format: request.format,
-        sampleRate: request.sample_rate,
-        useVoiceCloning: voiceCloning.useVoiceCloning,
-        referencesCount: references.length
-      });
-
       await apiFetchStream(
         config,
         "/v1/text-to-speech",
         {
           method: "POST",
           headers,
-          body: JSON.stringify({ 
-            ...request, 
+          body: JSON.stringify({
+            ...request,
             stream: true,
             references: references.length > 0 ? references : undefined,
             reference_id: voiceCloning.useVoiceCloning && references.length > 0 ? undefined : request.reference_id
           })
         },
         (event) => {
-          errorLogger.logDebug('Stream event received', { 
-            eventType: event.event,
-            hasData: !!event.data
-          });
           setStreamLog((prev) => [...prev, { event: String(event.event ?? "data"), data: event.data }]);
           if (event.event === "audio_chunk" && typeof event.data === "string") {
             const chunk = Uint8Array.from(atob(event.data), (c) => c.charCodeAt(0)).buffer;
@@ -164,25 +183,19 @@ export function SynthesisPanel() {
         }
         setObjectUrl(url);
         setAudioUrl(url);
-        errorLogger.logInfo('Streaming synthesis completed', { 
-          audioBlobSize: blob.size,
-          chunksCount: chunks.length,
-          format: request.format 
-        });
       }
       push({ title: "Streaming synthesis finished" });
     } catch (error) {
-      errorLogger.logError(error, '/v1/text-to-speech (stream)', { 
-        textLength: request.text.length,
-        format: request.format 
-      });
+      errorLogger.logError(error, '/v1/text-to-speech (stream)');
       const userMessage = errorLogger.getUserFriendlyMessage(error);
       push({ title: "Streaming failed", description: userMessage, variant: "error" });
+    } finally {
+      setIsGenerating(false);
     }
   };
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex flex-col gap-6">
       <InstructionsPanel
         title="🔊 Text-to-Speech with OpenAudio"
         description="Convert text to natural-sounding speech using OpenAudio-S1-mini. Supports multiple audio formats, sample rates, and voice cloning."
@@ -198,11 +211,9 @@ export function SynthesisPanel() {
             title: "Choose Audio Format and Settings",
             description: "Select output format (WAV, MP3, OGG, FLAC) and sample rate.",
             details: (
-              <ul className="text-sm space-y-1 mt-2">
+              <ul className="text-xs space-y-1 mt-2">
                 <li>• <strong>WAV:</strong> Lossless, best quality, large file size</li>
                 <li>• <strong>MP3:</strong> Compressed, smaller file, good quality (recommended)</li>
-                <li>• <strong>OGG:</strong> Open format, good compression</li>
-                <li>• <strong>FLAC:</strong> Lossless compression, better than WAV for storage</li>
                 <li>• <strong>Sample Rate:</strong> 22050 Hz (speech), 44100 Hz (music/high quality)</li>
               </ul>
             )
@@ -211,11 +222,6 @@ export function SynthesisPanel() {
             step: 3,
             title: "Configure Voice (Optional)",
             description: "Use a reference ID or upload 3-5 audio samples for voice cloning.",
-            details: (
-              <p className="text-sm mt-2">
-                Voice cloning creates a custom voice based on your audio samples. Best results with 3-5 clean recordings (10-30 seconds each) of the same speaker.
-              </p>
-            )
           },
           {
             step: 4,
@@ -244,161 +250,183 @@ export function SynthesisPanel() {
             problem: "Voice cloning not working",
             solution: "Upload 3-5 high-quality audio samples. Ensure samples are clear (no background noise), same speaker, and 10-30 seconds long. Check browser console for upload errors.",
           },
-          {
-            problem: "Audio playback fails in browser",
-            solution: "Try different format (MP3 instead of WAV). Ensure browser supports the audio format. Check browser console for MIME type errors.",
-          },
-          {
-            problem: "File download not working",
-            solution: "Check browser download settings and permissions. Try right-click → Save As on the audio player. Verify audio was generated successfully first.",
-          },
         ]}
       />
-      <form onSubmit={runSynthesis} className="grid gap-4 md:grid-cols-2">
-        <label className="flex h-full flex-col gap-2 md:col-span-2">
-          <span className="text-sm font-medium flex items-center gap-1">
-            Text
-            <span className="cursor-help text-slate-400" title={PARAM_HELP.text}>ℹ️</span>
-          </span>
-          <textarea
-            className="h-32 rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm"
-            value={request.text}
-            onChange={(event) => setRequest((prev) => ({ ...prev, text: event.target.value }))}
-            placeholder="Enter text to convert to speech..."
-            title={PARAM_HELP.text}
-          />
-        </label>
-        <div className="flex flex-col gap-2">
-          <label className="text-xs uppercase tracking-wide text-slate-400 flex items-center gap-1">
-            Format
-            <span className="cursor-help" title={PARAM_HELP.format}>ℹ️</span>
-          </label>
-          <select
-            className="rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm"
-            value={request.format}
-            onChange={(event) => setRequest((prev) => ({ ...prev, format: event.target.value }))}
-            title={PARAM_HELP.format}
-          >
-            <option value="wav">WAV (Lossless)</option>
-            <option value="mp3">MP3 (Compressed)</option>
-            <option value="ogg">OGG (Compressed)</option>
-            <option value="flac">FLAC (Lossless compressed)</option>
-          </select>
-        </div>
-        <div className="flex flex-col gap-2">
-          <label className="text-xs uppercase tracking-wide text-slate-400 flex items-center gap-1">
-            Sample rate
-            <span className="cursor-help" title={PARAM_HELP.sampleRate}>ℹ️</span>
-          </label>
-          <input
-            type="number"
-            className="rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm"
-            value={request.sample_rate}
-            onChange={(event) => setRequest((prev) => ({ ...prev, sample_rate: Number(event.target.value) }))}
-            placeholder="44100"
-            title={PARAM_HELP.sampleRate}
-          />
-        </div>
-        <div className="flex flex-col gap-2">
-          <label className="text-xs uppercase tracking-wide text-slate-400 flex items-center gap-1">
-            Reference ID
-            <span className="cursor-help" title={PARAM_HELP.referenceId}>ℹ️</span>
-          </label>
-          <input
-            className="rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm"
-            value={request.reference_id}
-            onChange={(event) => setRequest((prev) => ({ ...prev, reference_id: event.target.value }))}
-            disabled={voiceCloning.useVoiceCloning}
-            placeholder="e.g., default, voice_1"
-            title={PARAM_HELP.referenceId}
-          />
-        </div>
-        <div className="flex flex-col gap-2">
-          <label className="text-xs uppercase tracking-wide text-slate-400 flex items-center gap-1">
-            Top P
-            <span className="cursor-help" title={PARAM_HELP.topP}>ℹ️</span>
-          </label>
-          <input
-            type="number"
-            step="0.05"
-            min="0"
-            max="1"
-            className="rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm"
-            value={request.top_p}
-            onChange={(event) => setRequest((prev) => ({ ...prev, top_p: Number(event.target.value) }))}
-            placeholder="0.85"
-            title={PARAM_HELP.topP}
-          />
-        </div>
-        
-        {/* Voice Cloning Section */}
-        <div className="md:col-span-2 rounded-md border border-slate-800 bg-slate-900/40 p-4">
-          <div className="flex items-center gap-2 mb-3">
-            <h4 className="text-sm font-semibold text-emerald-300">🎭 Voice Cloning</h4>
-            <span className="cursor-help text-slate-400" title={PARAM_HELP.voiceCloning}>ℹ️</span>
-          </div>
-          <VoiceCloningInput
-            referenceFiles={voiceCloning.referenceFiles}
-            onFilesChange={voiceCloning.addReferenceFiles}
-            onFileRemove={voiceCloning.removeReferenceFile}
-            enabled={voiceCloning.useVoiceCloning}
-            onEnabledChange={voiceCloning.setUseVoiceCloning}
-            maxFiles={5}
-          />
-          <p className="text-xs text-slate-400 mt-2">
-            💡 Tip: Upload 3-5 clean audio samples (10-30 seconds each) for best voice cloning results
-          </p>
-        </div>
 
-        <label className="flex items-center gap-3 text-xs uppercase tracking-wide text-slate-400 md:col-span-2">
-          <input
-            type="checkbox"
-            className="h-4 w-4 rounded border border-slate-700 bg-slate-950"
-            checked={request.normalize}
-            onChange={(event) => setRequest((prev) => ({ ...prev, normalize: event.target.checked }))}
-            title={PARAM_HELP.normalize}
-          />
-          Normalise audio loudness
-          <span className="cursor-help" title={PARAM_HELP.normalize}>ℹ️</span>
-        </label>
-        <div className="flex items-center gap-2 md:col-span-2">
-          <button type="submit" className="rounded-md bg-emerald-500 px-4 py-2 text-sm font-semibold text-slate-950">
-            Render audio
-          </button>
-          <button
-            type="button"
-            onClick={runStreaming}
-            className="rounded-md border border-emerald-400 px-4 py-2 text-sm font-semibold text-emerald-300"
-          >
-            Stream audio
-          </button>
+      <div className="grid gap-6 lg:grid-cols-3">
+        <form onSubmit={runSynthesis} className="lg:col-span-2 flex flex-col gap-4">
+          <div className="rounded-xl border border-slate-800 bg-slate-900/50 p-1">
+            <textarea
+              className="w-full h-32 rounded-lg bg-transparent px-4 py-3 text-sm focus:outline-none focus:bg-slate-900/50 transition-colors resize-none placeholder:text-slate-600"
+              value={request.text}
+              onChange={(event) => setRequest((prev) => ({ ...prev, text: event.target.value }))}
+              placeholder="Enter text to convert to speech..."
+              title={PARAM_HELP.text}
+            />
+          </div>
+
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+            <div className="flex flex-col gap-2">
+              <label className="text-xs font-medium text-slate-400 flex items-center gap-1">
+                Format
+                <span className="cursor-help opacity-50 hover:opacity-100 transition-opacity" title={PARAM_HELP.format}>ℹ️</span>
+              </label>
+              <select
+                className="rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-sm focus:border-emerald-500/50 focus:outline-none"
+                value={request.format}
+                onChange={(event) => setRequest((prev) => ({ ...prev, format: event.target.value }))}
+              >
+                <option value="wav">WAV (Lossless)</option>
+                <option value="mp3">MP3 (Compressed)</option>
+                <option value="ogg">OGG (Compressed)</option>
+                <option value="flac">FLAC (Lossless)</option>
+              </select>
+            </div>
+            <div className="flex flex-col gap-2">
+              <label className="text-xs font-medium text-slate-400 flex items-center gap-1">
+                Sample rate
+                <span className="cursor-help opacity-50 hover:opacity-100 transition-opacity" title={PARAM_HELP.sampleRate}>ℹ️</span>
+              </label>
+              <input
+                type="number"
+                className="rounded-lg border border-slate-800 bg-slate-900/50 px-3 py-2 text-sm focus:border-emerald-500/50 focus:outline-none"
+                value={request.sample_rate}
+                onChange={(event) => setRequest((prev) => ({ ...prev, sample_rate: Number(event.target.value) }))}
+                placeholder="44100"
+              />
+            </div>
+            <div className="flex flex-col gap-2">
+              <label className="text-xs font-medium text-slate-400 flex items-center gap-1">
+                Top P
+                <span className="cursor-help opacity-50 hover:opacity-100 transition-opacity" title={PARAM_HELP.topP}>ℹ️</span>
+              </label>
+              <input
+                type="number"
+                step="0.05"
+                min="0"
+                max="1"
+                className="rounded-lg border border-slate-800 bg-slate-900/50 px-3 py-2 text-sm focus:border-emerald-500/50 focus:outline-none"
+                value={request.top_p}
+                onChange={(event) => setRequest((prev) => ({ ...prev, top_p: Number(event.target.value) }))}
+                placeholder="0.85"
+              />
+            </div>
+          </div>
+
+          <div className="flex flex-col gap-2">
+            <label className="text-xs font-medium text-slate-400 flex items-center gap-1">
+              Reference ID
+              <span className="cursor-help opacity-50 hover:opacity-100 transition-opacity" title={PARAM_HELP.referenceId}>ℹ️</span>
+            </label>
+            <input
+              className="rounded-lg border border-slate-800 bg-slate-900/50 px-3 py-2 text-sm focus:border-emerald-500/50 focus:outline-none disabled:opacity-50"
+              value={request.reference_id}
+              onChange={(event) => setRequest((prev) => ({ ...prev, reference_id: event.target.value }))}
+              disabled={voiceCloning.useVoiceCloning}
+              placeholder="e.g., default, voice_1"
+            />
+          </div>
+
+          {/* Voice Cloning Section */}
+          <div className="rounded-xl border border-slate-800 bg-slate-900/50 p-4">
+            <div className="flex items-center gap-2 mb-3">
+              <Mic className="h-4 w-4 text-emerald-400" />
+              <h4 className="text-sm font-semibold text-emerald-300">Voice Cloning</h4>
+              <span className="cursor-help text-slate-400 text-xs" title={PARAM_HELP.voiceCloning}>ℹ️</span>
+            </div>
+            <VoiceCloningInput
+              referenceFiles={voiceCloning.referenceFiles}
+              onFilesChange={voiceCloning.addReferenceFiles}
+              onFileRemove={voiceCloning.removeReferenceFile}
+              enabled={voiceCloning.useVoiceCloning}
+              onEnabledChange={voiceCloning.setUseVoiceCloning}
+              maxFiles={5}
+            />
+            <p className="text-xs text-slate-500 mt-2">
+              Upload 3-5 clean audio samples (10-30s each) for best results.
+            </p>
+          </div>
+
+          <label className="flex items-center gap-3 text-xs uppercase tracking-wide text-slate-400 cursor-pointer hover:text-emerald-400 transition-colors">
+            <input
+              type="checkbox"
+              className="h-4 w-4 rounded border border-slate-700 bg-slate-950 text-emerald-500 focus:ring-emerald-500/20"
+              checked={request.normalize}
+              onChange={(event) => setRequest((prev) => ({ ...prev, normalize: event.target.checked }))}
+            />
+            Normalise audio loudness
+          </label>
+
+          <div className="flex items-center gap-3 pt-2">
+            <button
+              type="submit"
+              className="flex-1 rounded-lg bg-emerald-500 px-4 py-3 text-sm font-semibold text-slate-950 hover:bg-emerald-400 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+              disabled={isGenerating}
+            >
+              {isGenerating ? (
+                <div className="h-4 w-4 rounded-full border-2 border-slate-950 border-t-transparent animate-spin" />
+              ) : (
+                <Play className="h-4 w-4" />
+              )}
+              Render Audio
+            </button>
+            <button
+              type="button"
+              onClick={runStreaming}
+              className="flex-1 rounded-lg border border-slate-700 bg-slate-900/50 px-4 py-3 text-sm font-semibold text-emerald-400 hover:bg-slate-800 hover:border-emerald-500/50 transition-all flex items-center justify-center gap-2"
+              disabled={isGenerating}
+            >
+              <Radio className="h-4 w-4" />
+              Stream Audio
+            </button>
+          </div>
+        </form>
+
+        <div className="flex flex-col gap-4">
+          {audioUrl ? (
+            <div className="flex-1 rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-4 animate-in fade-in slide-in-from-bottom-4 duration-500">
+              <div className="flex items-center gap-2 mb-4 pb-4 border-b border-emerald-500/10">
+                <Music className="h-5 w-5 text-emerald-400" />
+                <h3 className="text-sm font-semibold text-emerald-300">Generated Audio</h3>
+              </div>
+
+              <audio controls className="w-full mb-4" src={audioUrl} />
+
+              <a
+                className="flex items-center justify-center gap-2 w-full rounded-lg border border-emerald-500/20 bg-emerald-500/10 px-4 py-2 text-sm font-medium text-emerald-400 hover:bg-emerald-500/20 transition-colors"
+                href={audioUrl}
+                download={`speech-output.${request.format}`}
+              >
+                <Download className="h-4 w-4" />
+                Download File
+              </a>
+            </div>
+          ) : (
+            <div className="flex-1 rounded-xl border border-slate-800 bg-slate-900/20 p-8 flex flex-col items-center justify-center text-center gap-3 min-h-[300px]">
+              <div className="h-12 w-12 rounded-full bg-slate-800/50 flex items-center justify-center">
+                <Volume2 className="h-6 w-6 text-slate-600" />
+              </div>
+              <p className="text-sm text-slate-500">
+                Generated audio will appear here
+              </p>
+            </div>
+          )}
+
+          {streamLog.length > 0 && (
+            <div className="rounded-xl border border-slate-800 bg-slate-900/50 p-4 max-h-[300px] overflow-y-auto">
+              <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3 sticky top-0 bg-slate-900/95 py-1 backdrop-blur">Stream Events</h3>
+              <div className="flex flex-col gap-1.5 font-mono text-[10px]">
+                {streamLog.map((entry, index) => (
+                  <div key={index} className="flex gap-2 p-1.5 rounded hover:bg-slate-800/50 transition-colors border-l-2 border-transparent hover:border-emerald-500/50">
+                    <span className="text-emerald-500 shrink-0 min-w-[80px]">{entry.event}</span>
+                    <span className="text-slate-400 truncate">{JSON.stringify(entry.data)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
-      </form>
-      {audioUrl ? (
-        <div className="rounded-md border border-slate-800 bg-slate-900/60 p-4">
-          <h3 className="text-sm font-semibold text-emerald-300">Preview</h3>
-          <audio controls className="mt-2 w-full" src={audioUrl} />
-          <a
-            className="mt-3 inline-flex items-center text-xs text-emerald-300 underline"
-            href={audioUrl}
-            download="speech-output"
-          >
-            Download audio
-          </a>
-        </div>
-      ) : null}
-      {streamLog.length ? (
-        <div className="rounded-md border border-slate-800 bg-slate-900/60 p-4">
-          <h3 className="text-sm font-semibold text-emerald-300">Streaming events</h3>
-          <ul className="mt-2 flex flex-col gap-2 text-xs">
-            {streamLog.map((entry, index) => (
-              <li key={index} className="rounded bg-slate-800/60 p-2 font-mono">
-                <span className="text-emerald-400">{entry.event}:</span> {JSON.stringify(entry.data)}
-              </li>
-            ))}
-          </ul>
-        </div>
-      ) : null}
+      </div>
     </div>
   );
 }

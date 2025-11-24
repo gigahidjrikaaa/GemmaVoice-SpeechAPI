@@ -9,6 +9,7 @@ from scalar_fastapi import get_scalar_api_reference
 
 from app.api.router import api_router
 from app.config.settings import Settings, get_settings
+from app.middleware.error_handler import ErrorHandlerMiddleware
 from app.observability import (
     RequestContextMiddleware,
     configure_logging,
@@ -28,8 +29,10 @@ async def lifespan(app: FastAPI):
     logger.info("Application startup...")
 
     settings = get_settings()
+    
+    # Initialize LLM service with async startup
     llm_service = LLMService(settings=settings)
-    llm_service.startup()
+    await llm_service.startup()
     app.state.llm_service = llm_service
 
     whisper_service = WhisperService(settings=settings)
@@ -64,8 +67,9 @@ async def lifespan(app: FastAPI):
             app.state.whisper_service = None
         if hasattr(app.state, "rate_limiter") and app.state.rate_limiter is not None:
             app.state.rate_limiter = None
-        llm_service.shutdown()
-        app.state.llm_service = None
+        if hasattr(app.state, "llm_service") and app.state.llm_service is not None:
+            await llm_service.shutdown()
+            app.state.llm_service = None
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -125,6 +129,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         allow_headers=["*"],  # Allow all headers
     )
     
+    # Add error handling middleware
+    debug_mode = settings.log_level.upper() == "DEBUG"
+    application.add_middleware(ErrorHandlerMiddleware, debug=debug_mode)
+    
+    # Add request context middleware
     application.add_middleware(RequestContextMiddleware, settings=settings)
     application.include_router(api_router)
     register_metrics_endpoint(application)

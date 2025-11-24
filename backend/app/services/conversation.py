@@ -78,10 +78,10 @@ class ConversationService:
             )
 
             generation_params = generation_request.model_dump(exclude_unset=True)
-            llm_model = self._llm_service.model
             llm_start = time.perf_counter()
             try:
-                response_payload = await asyncio.to_thread(llm_model, **generation_params)
+                # Use async LLM service generate method instead of direct model access
+                response_payload = await self._llm_service.generate(**generation_params)
             except Exception:
                 record_external_call("llm_generation", time.perf_counter() - llm_start, success=False)
                 raise

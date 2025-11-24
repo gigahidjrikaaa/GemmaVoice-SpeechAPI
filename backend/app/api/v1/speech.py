@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import io
 from typing import Any, AsyncIterator, Dict
 
 from fastapi import (
@@ -18,7 +19,7 @@ from fastapi import (
     WebSocket,
     WebSocketDisconnect,
 )
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, Response
 
 from app.schemas.speech import (
     SpeechDialogueResponse,
@@ -40,7 +41,6 @@ from app.security import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(
-    tags=["speech"],
     dependencies=[Depends(require_api_key), Depends(enforce_rate_limit)],
 )
 
@@ -103,6 +103,7 @@ def _get_conversation_service(request: Request) -> ConversationService:
     "/speech-to-text",
     response_model=SpeechTranscriptionResponse,
     summary="Transcribe uploaded audio with Whisper",
+    tags=["STT (Whisper)"],
 )
 async def speech_to_text(
     file: UploadFile = File(..., description="Audio file to transcribe."),
@@ -148,19 +149,50 @@ async def speech_to_text(
 
 
 @router.post(
+    "/encode-reference",
+    response_model=Dict[str, str],
+    summary="Encode audio file for voice cloning",
+    description="Upload an audio file to get its base64 representation for use in the 'references' field of text-to-speech requests.",
+    tags=["TTS (OpenAudio)"],
+)
+async def encode_reference(
+    file: UploadFile = File(..., description="Audio file to encode (wav, mp3, etc)."),
+) -> Dict[str, str]:
+    """Helper endpoint to encode audio for voice cloning."""
+    audio_bytes = await file.read()
+    if not audio_bytes:
+        raise HTTPException(status_code=400, detail="Uploaded file was empty")
+    
+    encoded = base64.b64encode(audio_bytes).decode("ascii")
+    return {"reference_base64": encoded}
+
+
+@router.post(
     "/text-to-speech",
     response_model=SpeechSynthesisResponse,
     summary="Synthesize speech with OpenAudio",
+    tags=["TTS (OpenAudio)"],
     responses={
-        200: {"description": "Base64 encoded audio response."},
-        206: {"description": "Streaming audio response."},
+        200: {
+            "description": "Audio response (Base64 JSON or Binary Audio).",
+            "content": {
+                "application/json": {},
+                "audio/wav": {},
+                "audio/mpeg": {},
+            }
+        },
     },
 )
 async def text_to_speech(
     payload: SpeechSynthesisRequest,
+    request: Request,
     openaudio_service: OpenAudioService = Depends(_get_openaudio_service),
 ):
-    """Generate speech audio from text."""
+    """Generate speech audio from text.
+    
+    Returns either a JSON object with base64-encoded audio (default) or binary audio
+    if the 'Accept' header is set to an audio type (e.g., 'audio/wav') or if 'stream' is True.
+    """
 
     if payload.stream:
         stream_result = await openaudio_service.synthesize_stream(
@@ -204,6 +236,22 @@ async def text_to_speech(
         speed=payload.speed,
         volume=payload.volume,
     )
+    
+    # Check if client requested binary audio via Accept header
+    accept_header = request.headers.get("accept", "")
+    if "audio/" in accept_header or payload.format in accept_header:
+        headers = {
+            "x-audio-format": synthesis.response_format,
+            "x-sample-rate": str(synthesis.sample_rate),
+        }
+        if synthesis.reference_id:
+            headers["x-reference-id"] = synthesis.reference_id
+            
+        return Response(
+            content=synthesis.audio,
+            media_type=synthesis.media_type,
+            headers=headers
+        )
 
     return SpeechSynthesisResponse(
         audio_base64=synthesis.as_base64(),
@@ -218,6 +266,7 @@ async def text_to_speech(
     "/dialogue",
     response_model=SpeechDialogueResponse,
     summary="Run the full speech pipeline and return synthesised audio.",
+    tags=["Dialogue"],
 )
 async def dialogue(
     file: UploadFile = File(..., description="Audio file containing the user utterance."),
@@ -307,6 +356,12 @@ async def dialogue(
 
 @router.websocket("/speech-to-text/ws")
 async def speech_to_text_ws(websocket: WebSocket) -> None:
+    """WebSocket endpoint for speech-to-text.
+    
+    Supports two modes:
+    1. JSON mode: Send JSON messages with 'audio_base64' field.
+    2. Binary mode: Send raw binary audio chunks.
+    """
     if not await enforce_websocket_api_key(websocket):
         return
     if not await enforce_websocket_rate_limit(websocket):
@@ -318,44 +373,87 @@ async def speech_to_text_ws(websocket: WebSocket) -> None:
         await websocket.close(code=1013, reason="Whisper service is unavailable")
         return
 
+    # Buffer for binary audio chunks
+    audio_buffer = io.BytesIO()
+    
     try:
         while True:
-            payload = await websocket.receive_json()
-            audio_base64 = payload.get("audio_base64")
-            if not audio_base64:
-                await websocket.send_json({"event": "error", "detail": "Missing 'audio_base64' field."})
-                continue
-            try:
-                audio_bytes = base64.b64decode(audio_base64)
-            except (ValueError, TypeError):
-                await websocket.send_json(
-                    {"event": "error", "detail": "Invalid base64 data supplied for 'audio_base64'."}
-                )
-                continue
-
-            try:
-                transcription = await whisper_service.transcribe(
-                    audio_bytes,
-                    filename=payload.get("filename") or "audio.wav",
-                    content_type=payload.get("content_type"),
-                    language=payload.get("language"),
-                    prompt=payload.get("prompt"),
-                    response_format=payload.get("response_format"),
-                    temperature=payload.get("temperature"),
-                )
-            except RuntimeError:
-                await websocket.send_json(
-                    {"event": "error", "detail": "Failed to transcribe audio with Whisper."}
-                )
-                continue
-
-            transcript_model = _build_transcription_model(transcription)
-            await websocket.send_json({"event": "transcript", "data": transcript_model.model_dump()})
+            # Wait for message
+            message = await websocket.receive()
+            
+            if "bytes" in message:
+                # Handle binary audio chunk
+                chunk = message["bytes"]
+                if chunk:
+                    audio_buffer.write(chunk)
+                    
+                    # For now, we'll transcribe periodically or on specific command
+                    # This is a simplified "streaming" implementation that accumulates
+                    # and waits for a "commit" or processes chunks.
+                    # A true streaming implementation would use a VAD or sliding window.
+                    # Here we'll just acknowledge receipt.
+                    await websocket.send_json({"event": "received", "bytes": len(chunk)})
+                    
+            elif "text" in message:
+                # Handle JSON message
+                try:
+                    payload = json.loads(message["text"])
+                except json.JSONDecodeError:
+                    await websocket.send_json({"event": "error", "detail": "Invalid JSON"})
+                    continue
+                
+                event_type = payload.get("event")
+                
+                if event_type == "commit" or payload.get("audio_base64"):
+                    # Process buffered audio or new base64 audio
+                    if payload.get("audio_base64"):
+                        try:
+                            audio_bytes = base64.b64decode(payload["audio_base64"])
+                        except (ValueError, TypeError):
+                            await websocket.send_json({"event": "error", "detail": "Invalid base64"})
+                            continue
+                    else:
+                        # Process buffer
+                        audio_bytes = audio_buffer.getvalue()
+                        # Reset buffer after commit
+                        audio_buffer = io.BytesIO()
+                    
+                    if not audio_bytes:
+                        await websocket.send_json({"event": "warning", "detail": "No audio to transcribe"})
+                        continue
+                        
+                    try:
+                        transcription = await whisper_service.transcribe(
+                            audio_bytes,
+                            filename=payload.get("filename") or "stream.wav",
+                            content_type=payload.get("content_type"),
+                            language=payload.get("language"),
+                            prompt=payload.get("prompt"),
+                            response_format=payload.get("response_format"),
+                            temperature=payload.get("temperature"),
+                        )
+                        
+                        transcript_model = _build_transcription_model(transcription)
+                        await websocket.send_json({
+                            "event": "transcript",
+                            "data": transcript_model.model_dump()
+                        })
+                        
+                    except RuntimeError:
+                        await websocket.send_json({"event": "error", "detail": "Transcription failed"})
+                
+                elif event_type == "clear":
+                    audio_buffer = io.BytesIO()
+                    await websocket.send_json({"event": "cleared"})
+                    
     except WebSocketDisconnect:
         logger.info("Client disconnected from speech-to-text WebSocket")
-    except Exception as exc:  # pragma: no cover - defensive safeguard
+    except Exception as exc:
         logger.exception("Error in speech-to-text WebSocket handler")
-        await websocket.close(code=1011, reason="Internal server error")
+        try:
+            await websocket.close(code=1011, reason="Internal server error")
+        except Exception:
+            pass
 
 
 @router.websocket("/text-to-speech/ws")

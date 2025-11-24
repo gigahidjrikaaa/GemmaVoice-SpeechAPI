@@ -1,454 +1,327 @@
 import { useEffect, useRef, useState } from "react";
 import { useClientConfig } from "../context/ConfigContext";
-import { apiFetch } from "../lib/apiClient";
+import { useCode } from "../context/CodeContext";
 import { useToast } from "./Toast";
-import { base64ToBlob } from "../lib/audioUtils";
-import { useVoiceCloning } from "../hooks/useVoiceCloning";
-import { VoiceCloningInput } from "./VoiceCloningInput";
+import { InstructionsPanel } from "./InstructionsPanel";
+import { AudioVisualizer } from "./AudioVisualizer";
+import { fileToBase64 } from "../lib/audioUtils";
+import { Mic, Radio, Volume2, User, Bot } from "lucide-react";
 
 type Message = {
-  id: string;
   role: "user" | "assistant";
-  text: string;
-  audioUrl?: string;
-  timestamp: Date;
-  isPlaying?: boolean;
-};
-
-type TranscriptionResponse = {
-  text: string;
-  language?: string;
-};
-
-type GenerationResponse = {
-  text: string;
-};
-
-type SpeechResponse = {
-  audio_base64: string;
-  response_format: string;
-  media_type: string;
+  content: string;
 };
 
 export function ConversationPanel() {
   const { config } = useClientConfig();
+  const { setSnippet } = useCode();
   const { push } = useToast();
+  const [isConnected, setIsConnected] = useState(false);
   const [messages, setMessages] = useState<Message[]>([]);
-  const [isRecording, setIsRecording] = useState(false);
-  const [isProcessing, setIsProcessing] = useState(false);
-  const [systemPrompt, setSystemPrompt] = useState(
-    "You are a helpful AI assistant. Keep your responses concise and conversational."
-  );
-  const [useVoiceResponse, setUseVoiceResponse] = useState(true);
-  const [autoPlayResponse, setAutoPlayResponse] = useState(true);
-  const voiceCloning = useVoiceCloning();
-  
+  const [status, setStatus] = useState<string>("Ready to connect");
+
+  const wsRef = useRef<WebSocket | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const audioChunksRef = useRef<Blob[]>([]);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
-  const currentAudioRef = useRef<HTMLAudioElement | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const audioQueueRef = useRef<string[]>([]);
+  const isPlayingRef = useRef(false);
+  const audioContextRef = useRef<AudioContext | null>(null);
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+    return () => {
+      stopConversation();
+    };
+  }, []);
 
-  const startRecording = async () => {
+  // Update code snippet
+  useEffect(() => {
+    const wsUrl = config.baseUrl.replace(/^http/, "ws") + "/v1/conversation/ws";
+    const code = `// WebSocket Connection for Live Conversation
+const ws = new WebSocket("${wsUrl}");
+
+ws.onopen = () => {
+  console.log("Connected to conversation server");
+};
+
+ws.onmessage = async (event) => {
+  const data = JSON.parse(event.data);
+  
+  if (data.type === "audio") {
+    // Play received audio
+    playAudio(data.audio);
+  } else if (data.type === "text") {
+    // Display text transcript
+    console.log(data.role, data.content);
+  }
+};
+
+// Send audio from microphone
+navigator.mediaDevices.getUserMedia({ audio: true })
+  .then(stream => {
+    const recorder = new MediaRecorder(stream);
+    recorder.ondataavailable = (e) => {
+      if (e.data.size > 0) {
+        // Convert blob to base64 and send
+        ws.send(JSON.stringify({
+          type: "audio",
+          data: base64Audio
+        }));
+      }
+    };
+    recorder.start(500);
+  });`;
+
+    setSnippet({
+      language: "javascript",
+      code,
+      title: "Live Conversation Logic"
+    });
+  }, [config.baseUrl, setSnippet]);
+
+  const playNextAudio = async () => {
+    if (audioQueueRef.current.length === 0) {
+      isPlayingRef.current = false;
+      return;
+    }
+
+    isPlayingRef.current = true;
+    const audioBase64 = audioQueueRef.current.shift();
+
+    if (!audioBase64) {
+      playNextAudio();
+      return;
+    }
+
+    try {
+      if (!audioContextRef.current) {
+        audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
+      }
+
+      const res = await fetch(`data:audio/wav;base64,${audioBase64}`);
+      const arrayBuffer = await res.arrayBuffer();
+      const audioBuffer = await audioContextRef.current.decodeAudioData(arrayBuffer);
+
+      const source = audioContextRef.current.createBufferSource();
+      source.buffer = audioBuffer;
+      source.connect(audioContextRef.current.destination);
+      source.onended = () => {
+        playNextAudio();
+      };
+      source.start(0);
+    } catch (error) {
+      console.error("Error playing audio:", error);
+      playNextAudio();
+    }
+  };
+
+  const startConversation = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mediaRecorder = new MediaRecorder(stream);
-      mediaRecorderRef.current = mediaRecorder;
-      audioChunksRef.current = [];
+      streamRef.current = stream;
 
-      mediaRecorder.ondataavailable = (event) => {
-        if (event.data.size > 0) {
-          audioChunksRef.current.push(event.data);
+      const wsUrl = config.baseUrl.replace(/^http/, "ws") + "/v1/conversation/ws";
+      const ws = new WebSocket(wsUrl);
+      wsRef.current = ws;
+
+      ws.onopen = () => {
+        setIsConnected(true);
+        setStatus("Connected");
+        push({ title: "Connected to conversation server" });
+
+        // Start recording
+        const mediaRecorder = new MediaRecorder(stream);
+        mediaRecorderRef.current = mediaRecorder;
+
+        mediaRecorder.ondataavailable = async (event) => {
+          if (event.data.size > 0 && ws.readyState === WebSocket.OPEN) {
+            const base64Audio = await fileToBase64(event.data);
+            ws.send(JSON.stringify({
+              type: "audio",
+              data: base64Audio.split(',')[1]
+            }));
+          }
+        };
+
+        mediaRecorder.start(500); // Send chunks every 500ms
+      };
+
+      ws.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+
+        if (data.type === "text") {
+          setMessages(prev => [...prev, { role: data.role, content: data.content }]);
+        } else if (data.type === "audio") {
+          audioQueueRef.current.push(data.data);
+          if (!isPlayingRef.current) {
+            playNextAudio();
+          }
+        } else if (data.type === "error") {
+          push({ title: "Error", description: data.message, variant: "error" });
         }
       };
 
-      mediaRecorder.onstop = async () => {
-        const audioBlob = new Blob(audioChunksRef.current, { type: "audio/webm" });
-        await processAudio(audioBlob);
-        stream.getTracks().forEach((track) => track.stop());
+      ws.onclose = () => {
+        setIsConnected(false);
+        setStatus("Disconnected");
+        stopConversation();
       };
 
-      mediaRecorder.start();
-      setIsRecording(true);
-      push({ title: "Recording started", description: "Speak now..." });
+      ws.onerror = (error) => {
+        console.error("WebSocket error:", error);
+        push({ title: "Connection error", description: "WebSocket connection failed", variant: "error" });
+        stopConversation();
+      };
+
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Microphone access denied";
-      push({ title: "Recording failed", description: message, variant: "error" });
+      console.error("Error accessing microphone:", error);
+      push({ title: "Microphone error", description: "Could not access microphone", variant: "error" });
     }
   };
 
-  const stopRecording = () => {
-    if (mediaRecorderRef.current && isRecording) {
+  const stopConversation = () => {
+    if (mediaRecorderRef.current) {
       mediaRecorderRef.current.stop();
-      setIsRecording(false);
+      mediaRecorderRef.current = null;
     }
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(track => track.stop());
+      streamRef.current = null;
+    }
+    if (wsRef.current) {
+      wsRef.current.close();
+      wsRef.current = null;
+    }
+    setIsConnected(false);
+    setStatus("Disconnected");
   };
 
-  const processAudio = async (audioBlob: Blob) => {
-    setIsProcessing(true);
-    
-    try {
-      // Step 1: Speech-to-Text (Whisper)
-      const formData = new FormData();
-      formData.append("file", audioBlob, "recording.webm");
-
-      const { data: transcription } = await apiFetch<TranscriptionResponse>(
-        config,
-        "/v1/speech-to-text",
-        {
-          method: "POST",
-          body: formData,
-        }
-      );
-
-      const userText = transcription.text.trim();
-      if (!userText) {
-        push({ title: "No speech detected", variant: "error" });
-        setIsProcessing(false);
-        return;
-      }
-
-      // Add user message
-      const userMessage: Message = {
-        id: Date.now().toString(),
-        role: "user",
-        text: userText,
-        timestamp: new Date(),
-      };
-      setMessages((prev) => [...prev, userMessage]);
-
-      // Step 2: Generate response (Gemma LLM)
-      const conversationHistory = [...messages, userMessage]
-        .map((m) => `${m.role === "user" ? "User" : "Assistant"}: ${m.text}`)
-        .join("\n");
-
-      const prompt = `${systemPrompt}\n\nConversation history:\n${conversationHistory}\n\nAssistant:`;
-
-      const { data: generation } = await apiFetch<GenerationResponse>(
-        config,
-        "/v1/generate",
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            prompt,
-            max_tokens: 200,
-            temperature: 0.7,
-            top_p: 0.9,
-          }),
-        }
-      );
-
-      const assistantText = generation.text.trim();
-
-      // Step 3: Text-to-Speech (OpenAudio) - Optional
-      let audioUrl: string | undefined;
-      if (useVoiceResponse) {
-        try {
-          // Get references from voice cloning hook
-          const references = await voiceCloning.getReferences();
-
-          const { data: speech } = await apiFetch<SpeechResponse>(
-            config,
-            "/v1/text-to-speech",
-            {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                text: assistantText,
-                format: "mp3",
-                sample_rate: 24000,
-                normalize: true,
-                references: references.length > 0 ? references : undefined,
-              }),
-            }
-          );
-
-          const audioBlob = base64ToBlob(speech.audio_base64, `audio/${speech.response_format}`);
-          audioUrl = URL.createObjectURL(audioBlob);
-        } catch (error) {
-          console.error("TTS failed:", error);
-          push({ 
-            title: "TTS unavailable", 
-            description: "Response shown as text only", 
-            variant: "error" 
-          });
-        }
-      }
-
-      // Add assistant message
-      const assistantMessage: Message = {
-        id: (Date.now() + 1).toString(),
-        role: "assistant",
-        text: assistantText,
-        audioUrl,
-        timestamp: new Date(),
-      };
-      setMessages((prev) => [...prev, assistantMessage]);
-
-      // Auto-play audio if enabled
-      if (audioUrl && autoPlayResponse) {
-        setTimeout(() => playAudio(assistantMessage.id, audioUrl), 100);
-      }
-
-      push({ title: "Response generated" });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Processing failed";
-      push({ title: "Error", description: message, variant: "error" });
-    } finally {
-      setIsProcessing(false);
+  const toggleConnection = () => {
+    if (isConnected) {
+      stopConversation();
+    } else {
+      startConversation();
     }
-  };
-
-  const playAudio = (messageId: string, audioUrl: string) => {
-    // Stop current audio if playing
-    if (currentAudioRef.current) {
-      currentAudioRef.current.pause();
-      currentAudioRef.current = null;
-    }
-
-    const audio = new Audio(audioUrl);
-    currentAudioRef.current = audio;
-
-    setMessages((prev) =>
-      prev.map((m) =>
-        m.id === messageId ? { ...m, isPlaying: true } : { ...m, isPlaying: false }
-      )
-    );
-
-    audio.onended = () => {
-      setMessages((prev) =>
-        prev.map((m) => (m.id === messageId ? { ...m, isPlaying: false } : m))
-      );
-      currentAudioRef.current = null;
-    };
-
-    audio.play();
-  };
-
-  const clearConversation = () => {
-    setMessages([]);
-    if (currentAudioRef.current) {
-      currentAudioRef.current.pause();
-      currentAudioRef.current = null;
-    }
-  };
-
-  const exportConversationAsJSON = () => {
-    if (messages.length === 0) {
-      push({ title: "No messages to export", variant: "error" });
-      return;
-    }
-    const data = JSON.stringify(messages, null, 2);
-    const blob = new Blob([data], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `conversation-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
-    push({ title: "Conversation exported as JSON" });
-  };
-
-  const exportConversationAsText = () => {
-    if (messages.length === 0) {
-      push({ title: "No messages to export", variant: "error" });
-      return;
-    }
-    const text = messages
-      .map(m => `[${m.timestamp.toLocaleString()}] ${m.role === 'user' ? 'You' : 'Assistant'}: ${m.text}`)
-      .join('\n\n');
-    const blob = new Blob([text], { type: 'text/plain' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `conversation-${new Date().toISOString().replace(/[:.]/g, '-')}.txt`;
-    a.click();
-    URL.revokeObjectURL(url);
-    push({ title: "Conversation exported as text" });
   };
 
   return (
-    <div className="flex flex-col gap-4 h-full">
-      {/* Settings Panel */}
-      <div className="rounded-md border border-slate-800 bg-slate-900/60 p-4">
-        <h3 className="text-sm font-semibold text-emerald-300 mb-3">⚙️ Conversation Settings</h3>
-        
-        <div className="flex flex-col gap-3">
-          <label className="flex flex-col gap-2">
-            <span className="text-xs uppercase tracking-wide text-slate-400">System Prompt</span>
-            <textarea
-              className="h-20 rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm"
-              value={systemPrompt}
-              onChange={(e) => setSystemPrompt(e.target.value)}
-              placeholder="Define the AI assistant's personality and behavior..."
-            />
-          </label>
+    <div className="flex flex-col gap-6">
+      <InstructionsPanel
+        title="🎙️ Live Conversation"
+        description="Have a real-time voice conversation with Gemma 3. Speak naturally and listen to the response."
+        steps={[
+          {
+            step: 1,
+            title: "Connect",
+            description: "Click 'Start Conversation' to connect to the server and enable your microphone.",
+          },
+          {
+            step: 2,
+            title: "Speak",
+            description: "Talk to the AI. Your voice is streamed in real-time.",
+          },
+          {
+            step: 3,
+            title: "Listen",
+            description: "The AI responds with generated speech.",
+          }
+        ]}
+        tips={[
+          "Use headphones to prevent audio feedback (echo)",
+          "Speak clearly for better recognition",
+          "The conversation context is maintained during the session"
+        ]}
+        troubleshooting={[
+          {
+            problem: "Connection failed",
+            solution: "Ensure the backend server is running and the WebSocket endpoint is accessible."
+          },
+          {
+            problem: "No audio response",
+            solution: "Check your volume and ensure audio permissions are granted."
+          }
+        ]}
+      />
 
-          <div className="grid grid-cols-2 gap-3">
-            <label className="flex items-center gap-2 text-sm text-slate-300">
-              <input
-                type="checkbox"
-                className="h-4 w-4 rounded border border-slate-700 bg-slate-950"
-                checked={useVoiceResponse}
-                onChange={(e) => setUseVoiceResponse(e.target.checked)}
-              />
-              🔊 Voice responses
-            </label>
-
-            <label className="flex items-center gap-2 text-sm text-slate-300">
-              <input
-                type="checkbox"
-                className="h-4 w-4 rounded border border-slate-700 bg-slate-950"
-                checked={autoPlayResponse}
-                onChange={(e) => setAutoPlayResponse(e.target.checked)}
-                disabled={!useVoiceResponse}
-              />
-              ▶️ Auto-play
-            </label>
-          </div>
-
-          {/* Voice Cloning Section */}
-          {useVoiceResponse && (
-            <VoiceCloningInput
-              referenceFiles={voiceCloning.referenceFiles}
-              onFilesChange={voiceCloning.addReferenceFiles}
-              onFileRemove={voiceCloning.removeReferenceFile}
-              enabled={voiceCloning.useVoiceCloning}
-              onEnabledChange={voiceCloning.setUseVoiceCloning}
-              maxFiles={5}
-              className="border-t border-slate-700 pt-3"
-            />
-          )}
-        </div>
-      </div>
-
-      {/* Conversation Area */}
-      <div className="flex-1 rounded-md border border-slate-800 bg-slate-900/60 p-4 overflow-y-auto min-h-[400px] max-h-[600px]">
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="text-sm font-semibold text-emerald-300">💬 Live Conversation</h3>
-          {messages.length > 0 && (
-            <div className="flex items-center gap-2">
-              <button
-                onClick={exportConversationAsJSON}
-                className="text-xs text-blue-400 hover:text-blue-300 transition-colors"
-                title="Export as JSON"
-              >
-                📄 Export JSON
-              </button>
-              <button
-                onClick={exportConversationAsText}
-                className="text-xs text-blue-400 hover:text-blue-300 transition-colors"
-                title="Export as Text"
-              >
-                📝 Export TXT
-              </button>
-              <button
-                onClick={clearConversation}
-                className="text-xs text-red-400 hover:text-red-300 transition-colors"
-              >
-                Clear chat
-              </button>
+      <div className="grid gap-6 lg:grid-cols-3">
+        <div className="lg:col-span-2 flex flex-col gap-6">
+          {/* Visualizer & Controls */}
+          <div className="rounded-xl border border-slate-800 bg-slate-900/50 p-6 flex flex-col items-center gap-6 relative overflow-hidden">
+            {/* Status Indicator */}
+            <div className={`absolute top-4 right-4 flex items-center gap-2 text-xs font-mono px-2 py-1 rounded-full border ${isConnected
+                ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-400"
+                : "border-slate-700 bg-slate-800/50 text-slate-400"
+              }`}>
+              <div className={`h-2 w-2 rounded-full ${isConnected ? "bg-emerald-500 animate-pulse" : "bg-slate-500"}`} />
+              {status}
             </div>
-          )}
-        </div>
 
-        {messages.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-full text-center py-12">
-            <div className="text-6xl mb-4">🎙️</div>
-            <p className="text-slate-400 text-sm">No messages yet</p>
-            <p className="text-slate-500 text-xs mt-2">
-              Click the microphone button below to start a conversation
-            </p>
-          </div>
-        ) : (
-          <div className="flex flex-col gap-3">
-            {messages.map((message) => (
-              <div
-                key={message.id}
-                className={`flex ${message.role === "user" ? "justify-end" : "justify-start"}`}
-              >
-                <div
-                  className={`max-w-[80%] rounded-lg px-4 py-3 ${
-                    message.role === "user"
-                      ? "bg-emerald-600 text-white"
-                      : "bg-slate-800 text-slate-100"
-                  }`}
-                >
-                  <div className="flex items-center gap-2 mb-1">
-                    <span className="text-xs font-semibold">
-                      {message.role === "user" ? "You" : "Assistant"}
-                    </span>
-                    <span className="text-xs opacity-60">
-                      {message.timestamp.toLocaleTimeString()}
-                    </span>
+            {/* Audio Visualizer */}
+            <div className="w-full h-48 rounded-lg border border-slate-800 bg-slate-950/50 relative overflow-hidden">
+              {isConnected ? (
+                <AudioVisualizer stream={streamRef.current} className="w-full h-full" />
+              ) : (
+                <div className="absolute inset-0 flex items-center justify-center text-slate-600">
+                  <div className="text-center">
+                    <Radio className="h-12 w-12 mx-auto mb-2 opacity-20" />
+                    <p className="text-sm">Visualizer ready</p>
                   </div>
-                  <p className="text-sm whitespace-pre-wrap leading-relaxed">{message.text}</p>
-                  
-                  {message.audioUrl && (
-                    <div className="mt-2 flex items-center gap-2">
-                      <button
-                        onClick={() => playAudio(message.id, message.audioUrl!)}
-                        className={`text-xs px-2 py-1 rounded ${
-                          message.isPlaying
-                            ? "bg-emerald-500 text-white"
-                            : "bg-slate-700 text-slate-300 hover:bg-slate-600"
-                        } transition-colors`}
-                      >
-                        {message.isPlaying ? "🔊 Playing..." : "▶️ Play audio"}
-                      </button>
-                    </div>
-                  )}
                 </div>
-              </div>
-            ))}
-            <div ref={messagesEndRef} />
-          </div>
-        )}
-      </div>
-
-      {/* Controls */}
-      <div className="rounded-md border border-slate-800 bg-slate-900/60 p-4">
-        <div className="flex items-center justify-center gap-4">
-          {!isRecording && !isProcessing && (
-            <button
-              onClick={startRecording}
-              className="flex items-center gap-2 rounded-full bg-emerald-500 px-6 py-3 text-sm font-semibold text-slate-950 hover:bg-emerald-400 transition-colors shadow-lg"
-            >
-              <span className="text-xl">🎙️</span>
-              <span>Start Recording</span>
-            </button>
-          )}
-
-          {isRecording && (
-            <button
-              onClick={stopRecording}
-              className="flex items-center gap-2 rounded-full bg-red-500 px-6 py-3 text-sm font-semibold text-white hover:bg-red-400 transition-colors shadow-lg animate-pulse"
-            >
-              <span className="text-xl">⏹️</span>
-              <span>Stop Recording</span>
-            </button>
-          )}
-
-          {isProcessing && (
-            <div className="flex items-center gap-3 px-6 py-3 text-sm text-emerald-300">
-              <div className="animate-spin">⚙️</div>
-              <span>Processing your message...</span>
+              )}
             </div>
-          )}
+
+            {/* Main Action Button */}
+            <button
+              onClick={toggleConnection}
+              className={`rounded-full px-8 py-4 font-bold text-sm transition-all flex items-center gap-3 shadow-lg ${isConnected
+                  ? "bg-red-500 text-white hover:bg-red-600 hover:shadow-red-500/20"
+                  : "bg-emerald-500 text-slate-950 hover:bg-emerald-400 hover:shadow-emerald-500/20"
+                }`}
+            >
+              {isConnected ? (
+                <>
+                  <div className="h-3 w-3 rounded bg-white" />
+                  End Conversation
+                </>
+              ) : (
+                <>
+                  <Mic className="h-5 w-5" />
+                  Start Conversation
+                </>
+              )}
+            </button>
+          </div>
         </div>
 
-        <div className="mt-3 text-center">
-          <p className="text-xs text-slate-400">
-            {isRecording
-              ? "🔴 Recording in progress - speak clearly"
-              : isProcessing
-              ? "Processing: STT → LLM → TTS"
-              : `${messages.length} message(s) in conversation`}
-          </p>
+        {/* Chat Log */}
+        <div className="flex flex-col gap-4 h-[500px]">
+          <div className="flex items-center gap-2 pb-2 border-b border-slate-800">
+            <Volume2 className="h-4 w-4 text-emerald-400" />
+            <h3 className="text-sm font-semibold text-slate-200">Conversation Log</h3>
+          </div>
+
+          <div className="flex-1 overflow-y-auto space-y-4 pr-2 scrollbar-thin scrollbar-thumb-slate-700 scrollbar-track-transparent">
+            {messages.length === 0 ? (
+              <div className="h-full flex flex-col items-center justify-center text-slate-600 text-center p-4">
+                <p className="text-sm">No messages yet.</p>
+                <p className="text-xs mt-1 opacity-70">Start the conversation to see the transcript.</p>
+              </div>
+            ) : (
+              messages.map((msg, idx) => (
+                <div key={idx} className={`flex gap-3 ${msg.role === 'user' ? 'flex-row-reverse' : ''}`}>
+                  <div className={`h-8 w-8 rounded-full flex items-center justify-center shrink-0 ${msg.role === 'user' ? 'bg-slate-700 text-slate-300' : 'bg-emerald-500/20 text-emerald-400'
+                    }`}>
+                    {msg.role === 'user' ? <User className="h-4 w-4" /> : <Bot className="h-4 w-4" />}
+                  </div>
+                  <div className={`rounded-lg p-3 text-sm max-w-[85%] ${msg.role === 'user'
+                      ? 'bg-slate-800 text-slate-200 rounded-tr-none'
+                      : 'bg-emerald-500/10 text-emerald-100 border border-emerald-500/20 rounded-tl-none'
+                    }`}>
+                    {msg.content}
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
         </div>
       </div>
     </div>

@@ -100,6 +100,26 @@ class SpeechSynthesisRequest(BaseModel):
         description="When true, stream the audio response rather than returning base64.",
     )
 
+    model_config = ConfigDict(
+        populate_by_name=True,
+        json_schema_extra={
+            "examples": [
+                {
+                    "text": "Hello, world! This is a test of the text-to-speech system.",
+                    "response_format": "wav",
+                    "sample_rate": 32000,
+                    "speed": 1.0,
+                    "volume": 0.0,
+                },
+                {
+                    "text": "This is a voice cloning example.",
+                    "references": ["<base64_encoded_audio_string>"],
+                    "normalize": True,
+                }
+            ]
+        }
+    )
+
 
 class SpeechSynthesisResponse(BaseModel):
     audio_base64: str = Field(..., description="Base64 encoded audio payload.")
