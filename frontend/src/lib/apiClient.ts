@@ -101,38 +101,49 @@ export async function apiFetchStream(
   let buffer = "";
 
   try {
+    // SSE state
+    let currentEvent = "message";
+    let currentData = "";
+
     while (true) {
       const { done, value } = await reader.read();
 
       if (done) {
-        // Process any remaining data in buffer
-        if (buffer.trim()) {
-          try {
-            const parsed = JSON.parse(buffer);
-            onChunk(parsed);
-          } catch (e) {
-            console.warn("Failed to parse final buffer:", buffer, e);
-          }
-        }
         onComplete?.();
         break;
       }
 
       buffer += decoder.decode(value, { stream: true });
 
-      // Split on newlines and process complete chunks
-      const lines = buffer.split("\n");
-      buffer = lines.pop() || ""; // Keep incomplete line in buffer
+      // Process complete SSE messages (terminated by double newline)
+      const messages = buffer.split("\n\n");
+      buffer = messages.pop() || ""; // Keep incomplete message in buffer
 
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed) continue;
+      for (const message of messages) {
+        if (!message.trim()) continue;
 
-        try {
-          const parsed = JSON.parse(trimmed);
-          onChunk(parsed);
-        } catch (e) {
-          console.warn("Failed to parse chunk:", trimmed, e);
+        // Parse SSE message lines
+        const lines = message.split("\n");
+        currentEvent = "message"; // Reset
+        currentData = "";
+
+        for (const line of lines) {
+          if (line.startsWith("event:")) {
+            currentEvent = line.substring(6).trim();
+          } else if (line.startsWith("data:")) {
+            const dataLine = line.substring(5).trim();
+            currentData += (currentData ? "\n" : "") + dataLine;
+          }
+        }
+
+        // Parse data and call handler
+        if (currentData) {
+          try {
+            const parsedData = JSON.parse(currentData);
+            onChunk({ event: currentEvent, data: parsedData });
+          } catch (e) {
+            console.warn("Failed to parse SSE data:", currentData, e);
+          }
         }
       }
     }

@@ -109,7 +109,19 @@ export function DialoguePanel() {
       }
       push({ title: "Dialogue completed" });
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Unknown error";
+      // Properly extract and stringify error message from API error object
+      let message = 'Unknown error';
+      if (typeof error === 'string') {
+        message = error;
+      } else if (error && typeof error === 'object') {
+        const err = error as any;
+        const errorMsg = err.error || err.detail || err.message;
+        if (typeof errorMsg === 'string') {
+          message = errorMsg;
+        } else if (errorMsg && typeof errorMsg === 'object') {
+          message = JSON.stringify(errorMsg);
+        }
+      }
       push({ title: "Dialogue failed", description: message, variant: "error" });
     } finally {
       setIsProcessing(false);
@@ -174,7 +186,19 @@ export function DialoguePanel() {
       }
       push({ title: "Streaming dialogue finished" });
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Unknown streaming error";
+      // Properly extract and stringify error message from API error object
+      let message = 'Unknown streaming error';
+      if (typeof error === 'string') {
+        message = error;
+      } else if (error && typeof error === 'object') {
+        const err = error as any;
+        const errorMsg = err.error || err.detail || err.message;
+        if (typeof errorMsg === 'string') {
+          message = errorMsg;
+        } else if (errorMsg && typeof errorMsg === 'object') {
+          message = JSON.stringify(errorMsg);
+        }
+      }
       push({ title: "Streaming failed", description: message, variant: "error" });
     } finally {
       setIsProcessing(false);

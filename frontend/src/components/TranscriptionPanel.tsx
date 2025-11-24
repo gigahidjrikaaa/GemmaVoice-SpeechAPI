@@ -128,7 +128,28 @@ navigator.mediaDevices.getUserMedia({ audio: true })
       push({ title: "Transcription complete" });
     },
     onError: (error) => {
-      const message = error instanceof Error ? error.message : String(error);
+      // Properly extract and stringify error message from API error object
+      let message = 'Unknown error';
+
+      if (typeof error === 'string') {
+        message = error;
+      } else if (error && typeof error === 'object') {
+        // Cast to any since API errors can have various shapes
+        const err = error as any;
+        const errorMsg = err.error || err.detail || err.message;
+
+        if (typeof errorMsg === 'string') {
+          message = errorMsg;
+        } else if (errorMsg && typeof errorMsg === 'object') {
+          // Handle Pydantic validation errors which have nested objects
+          if (Array.isArray(errorMsg)) {
+            message = errorMsg.map((e: any) => e.msg || JSON.stringify(e)).join('; ');
+          } else {
+            message = JSON.stringify(errorMsg);
+          }
+        }
+      }
+
       push({ title: "Transcription failed", description: message, variant: "error" });
     }
   });
@@ -340,8 +361,8 @@ navigator.mediaDevices.getUserMedia({ audio: true })
               <button
                 onClick={toggleRecording}
                 className={`rounded-full px-8 py-4 font-bold text-sm transition-all flex items-center gap-3 shadow-lg ${isRecording
-                    ? "bg-red-500 text-white hover:bg-red-600 hover:shadow-red-500/20"
-                    : "bg-emerald-500 text-slate-950 hover:bg-emerald-400 hover:shadow-emerald-500/20"
+                  ? "bg-red-500 text-white hover:bg-red-600 hover:shadow-red-500/20"
+                  : "bg-emerald-500 text-slate-950 hover:bg-emerald-400 hover:shadow-emerald-500/20"
                   }`}
               >
                 {isRecording ? (
@@ -379,8 +400,8 @@ navigator.mediaDevices.getUserMedia({ audio: true })
                 <label
                   htmlFor="audio-upload"
                   className={`flex flex-col items-center justify-center w-full h-32 rounded-lg border-2 border-dashed transition-colors cursor-pointer ${audioFile
-                      ? "border-emerald-500/50 bg-emerald-500/5"
-                      : "border-slate-800 hover:border-slate-700 bg-slate-950/30 hover:bg-slate-900/50"
+                    ? "border-emerald-500/50 bg-emerald-500/5"
+                    : "border-slate-800 hover:border-slate-700 bg-slate-950/30 hover:bg-slate-900/50"
                     }`}
                 >
                   {audioFile ? (

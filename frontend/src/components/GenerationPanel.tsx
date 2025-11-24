@@ -59,6 +59,10 @@ export function GenerationPanel() {
 
   const mutation = useMutation<GenerationResponse, ApiError, typeof request>({
     mutationFn: async (payload) => {
+      // Debug logging to investigate validation error
+      console.log('🔍 Sync Generation - Payload:', payload);
+      console.log('🔍 Sync Generation - JSON:', JSON.stringify(payload));
+
       errorLogger.logInfo('Starting text generation', { payload });
       const { data } = await apiFetch<GenerationResponse>(config, "/v1/generate", {
         method: "POST",
@@ -132,6 +136,22 @@ export function GenerationPanel() {
       }, (event) => {
         errorLogger.logDebug('Stream event received', { event: event.event, dataType: typeof event.data });
         setStreamLog((prev) => [...prev, { event: String(event.event ?? "data"), data: event.data }]);
+
+        // Handle text events - parse and display generated text
+        if (event.event === 'text' && event.data && typeof event.data === 'object') {
+          const textData = event.data as { text?: string };
+          if (textData.text) {
+            // Accumulate text tokens
+            setResult((prev) => ({
+              generated_text: (prev?.generated_text || '') + textData.text
+            }));
+          }
+        }
+
+        // Handle done event
+        if (event.event === 'done') {
+          push({ title: "Streaming complete" });
+        }
       });
       errorLogger.logInfo('Streaming completed successfully', { eventsReceived: streamLog.length });
       push({ title: "Streaming run finished" });
