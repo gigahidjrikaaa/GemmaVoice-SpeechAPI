@@ -19,9 +19,8 @@ services:
     environment:
       - HUGGING_FACE_HUB_TOKEN=${HUGGING_FACE_HUB_TOKEN:-}
       - ENABLE_FASTER_WHISPER=false
-      - FASTER_WHISPER_MODEL_SIZE=${FASTER_WHISPER_MODEL_SIZE:-base}
-      - FASTER_WHISPER_DEVICE=${FASTER_WHISPER_DEVICE:-cuda}
-      - FASTER_WHISPER_COMPUTE_TYPE=${FASTER_WHISPER_COMPUTE_TYPE:-float16}
+      - OPENAI_API_BASE=http://whisper_service:8000/v1
+      - OPENAI_API_KEY=dummy-key
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - REQUEST_ID_HEADER=${REQUEST_ID_HEADER:-X-Request-ID}
       - API_KEY_ENABLED=${API_KEY_ENABLED:-false}
@@ -43,6 +42,7 @@ services:
       - "21250:6666"
     depends_on:
       - openaudio_api
+      - whisper_service
     networks:
       # Connect this service to our shared network
       - shared_services_network
@@ -52,6 +52,34 @@ services:
       timeout: 10s
       retries: 3
       start_period: 300s
+
+  whisper_service:
+    image: fedirz/faster-whisper-server:latest-cuda
+    container_name: whisper_service
+    restart: unless-stopped
+    environment:
+      - WHISPER_MODEL=base
+      - WHISPER_COMPUTE_TYPE=float16
+      - WHISPER_DEVICE=cuda
+    volumes:
+      - ~/.cache/huggingface:/root/.cache/huggingface
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [ gpu ]
+    networks:
+      - shared_services_network
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:8000/health" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
 
   openaudio_api:
     image: fishaudio/fish-speech:server-cuda

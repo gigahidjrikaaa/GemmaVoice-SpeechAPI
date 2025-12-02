@@ -5,11 +5,11 @@ import { ConfigProvider } from "./context/ConfigContext";
 import { TabsProvider, useTabs } from "./context/TabsContext";
 import { ModelsProvider } from "./context/ModelsContext";
 import { CodeProvider, useCode } from "./context/CodeContext";
-import { DialoguePanel } from "./components/DialoguePanel";
+
 import { GenerationPanel } from "./components/GenerationPanel";
 import { SynthesisPanel } from "./components/SynthesisPanel";
 import { TranscriptionPanel } from "./components/TranscriptionPanel";
-import { ConversationPanel } from "./components/ConversationPanel";
+import { VoiceChatPanel } from "./components/VoiceChatPanel";
 import { ToastProvider } from "./components/Toast";
 import { CodeViewer } from "./components/CodeViewer";
 import { Code, Layout } from "lucide-react";
@@ -18,8 +18,7 @@ const tabs = [
   { id: "generate", label: "Text Generation", component: GenerationPanel },
   { id: "stt", label: "Speech to Text", component: TranscriptionPanel },
   { id: "tts", label: "Text to Speech", component: SynthesisPanel },
-  { id: "conversation", label: "🎙️ Live Conversation", component: ConversationPanel },
-  { id: "dialogue", label: "Dialogue", component: DialoguePanel }
+  { id: "voice-chat", label: "🎙️ Voice Chat", component: VoiceChatPanel }
 ];
 
 function AppShell() {
@@ -43,8 +42,8 @@ function AppShell() {
             <button
               onClick={() => setShowCode(!showCode)}
               className={`flex items-center gap-2 rounded-md border px-3 py-1.5 text-xs font-medium transition-colors ${showCode
-                  ? "border-emerald-500/50 bg-emerald-500/10 text-emerald-400"
-                  : "border-slate-800 bg-slate-900 text-slate-400 hover:text-slate-200"
+                ? "border-emerald-500/50 bg-emerald-500/10 text-emerald-400"
+                : "border-slate-800 bg-slate-900 text-slate-400 hover:text-slate-200"
                 }`}
             >
               <Code className="h-4 w-4" />

@@ -32,13 +32,13 @@ def _build_request(headers: dict[str, str]) -> Request:
 
 def test_require_api_key_noop_when_disabled() -> None:
     request = _build_request({})
-    settings = Settings(api_key_enabled=False)
+    settings = Settings(_env_file=None, api_key_enabled=False)
     require_api_key(request, settings=settings)  # Should not raise
 
 
 def test_require_api_key_rejects_missing_header() -> None:
     request = _build_request({})
-    settings = Settings(api_key_enabled=True, api_keys=["secret"])
+    settings = Settings(_env_file=None, api_key_enabled=True, api_keys=["secret"])
     with pytest.raises(HTTPException) as exc:
         require_api_key(request, settings=settings)
     assert exc.value.status_code == 401
@@ -46,14 +46,14 @@ def test_require_api_key_rejects_missing_header() -> None:
 
 def test_require_api_key_accepts_valid_header() -> None:
     request = _build_request({"X-API-Key": "secret"})
-    settings = Settings(api_key_enabled=True, api_keys=["secret"])
+    settings = Settings(_env_file=None, api_key_enabled=True, api_keys=["secret"])
     require_api_key(request, settings=settings)
 
 
 @pytest.mark.asyncio
 async def test_websocket_enforcement_closes_on_missing_key() -> None:
     websocket = DummyWebSocket(Headers({}))
-    settings = Settings(api_key_enabled=True, api_keys=["secret"])
+    settings = Settings(_env_file=None, api_key_enabled=True, api_keys=["secret"])
 
     authorised = await enforce_websocket_api_key(websocket, settings=settings)
 
@@ -65,7 +65,7 @@ async def test_websocket_enforcement_closes_on_missing_key() -> None:
 @pytest.mark.asyncio
 async def test_websocket_enforcement_allows_valid_key() -> None:
     websocket = DummyWebSocket(Headers({"X-API-Key": "secret"}))
-    settings = Settings(api_key_enabled=True, api_keys=["secret"])
+    settings = Settings(_env_file=None, api_key_enabled=True, api_keys=["secret"])
 
     authorised = await enforce_websocket_api_key(websocket, settings=settings)
 

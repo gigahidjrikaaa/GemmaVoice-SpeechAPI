@@ -30,13 +30,13 @@ async def lifespan(app: FastAPI):
 
     settings = get_settings()
     
-    # Initialize LLM service with async startup
+    # Initialize LLM service with async startup (lazy loading)
     llm_service = LLMService(settings=settings)
-    await llm_service.startup()
+    # await llm_service.startup()  # Removed for lazy loading
     app.state.llm_service = llm_service
 
     whisper_service = WhisperService(settings=settings)
-    await whisper_service.startup()
+    # await whisper_service.startup()  # Removed for lazy loading
     app.state.whisper_service = whisper_service
 
     openaudio_service = OpenAudioService(settings=settings)

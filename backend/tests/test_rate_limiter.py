@@ -48,7 +48,7 @@ class DummyWebSocket:
 
 @pytest.mark.asyncio
 async def test_rate_limiter_rejects_when_budget_exhausted() -> None:
-    settings = Settings(
+    settings = Settings(_env_file=None,
         rate_limit_enabled=True,
         rate_limit_requests=1,
         rate_limit_window_seconds=60,
@@ -67,7 +67,7 @@ async def test_rate_limiter_rejects_when_budget_exhausted() -> None:
 
 @pytest.mark.asyncio
 async def test_rate_limiter_isolated_per_api_key() -> None:
-    settings = Settings(
+    settings = Settings(_env_file=None,
         rate_limit_enabled=True,
         rate_limit_requests=1,
         rate_limit_window_seconds=60,
@@ -81,7 +81,7 @@ async def test_rate_limiter_isolated_per_api_key() -> None:
 
 @pytest.mark.asyncio
 async def test_websocket_rate_limiter_closes_on_rejection() -> None:
-    settings = Settings(
+    settings = Settings(_env_file=None,
         rate_limit_enabled=True,
         rate_limit_requests=1,
         rate_limit_window_seconds=60,

@@ -253,6 +253,31 @@ export function SynthesisPanel() {
         ]}
       />
 
+      {/* Indonesian Voice Guide Card */}
+      <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-4 animate-in fade-in slide-in-from-bottom-4 duration-500">
+        <div className="flex items-center gap-2 mb-2">
+          <span className="text-xl">🇮🇩</span>
+          <h3 className="text-sm font-semibold text-emerald-300">Indonesian Voice Guide</h3>
+        </div>
+        <p className="text-xs text-emerald-100/80 mb-3 leading-relaxed">
+          The OpenAudio-s1-mini model supports Indonesian speech synthesis. For best results:
+        </p>
+        <ul className="text-xs space-y-2 text-emerald-100/70">
+          <li className="flex gap-2">
+            <span className="text-emerald-400">•</span>
+            <span>Input text should be in standard Indonesian (Bahasa Indonesia).</span>
+          </li>
+          <li className="flex gap-2">
+            <span className="text-emerald-400">•</span>
+            <span>If the default voice sounds too "western", try using <strong>Voice Cloning</strong> with a sample of an Indonesian speaker (10-30s audio).</span>
+          </li>
+          <li className="flex gap-2">
+            <span className="text-emerald-400">•</span>
+            <span>Adjust <strong>Temperature</strong> to 0.3-0.5 for more stable pronunciation.</span>
+          </li>
+        </ul>
+      </div>
+
       <div className="grid gap-6 lg:grid-cols-3">
         <form onSubmit={runSynthesis} className="lg:col-span-2 flex flex-col gap-4">
           <div className="rounded-xl border border-slate-800 bg-slate-900/50 p-1">

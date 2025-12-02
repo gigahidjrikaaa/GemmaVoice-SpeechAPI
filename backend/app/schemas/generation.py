@@ -11,6 +11,7 @@ class GenerationRequest(BaseModel):
     """Request schema for text generation."""
     
     prompt: str = Field(..., description="Input prompt for text generation")
+    system_prompt: Optional[str] = Field(default=None, description="System instructions for the model")
     max_tokens: int = Field(default=512, ge=1, le=4096)
     temperature: float = Field(default=0.7, ge=0.0, le=2.0)
     top_p: float = Field(default=0.95, ge=0.0, le=1.0)

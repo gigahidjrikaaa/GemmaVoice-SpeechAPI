@@ -41,11 +41,12 @@ router = APIRouter(
 )
 
 
-def _apply_chat_template(prompt: str) -> tuple[str, bool]:
+def _apply_chat_template(prompt: str, system_prompt: str | None = None) -> tuple[str, bool]:
     """Apply Gemma 3 chat template if needed.
     
     Args:
         prompt: Input prompt
+        system_prompt: Optional system instructions
         
     Returns:
         Tuple of (formatted_prompt, was_template_applied)
@@ -53,12 +54,14 @@ def _apply_chat_template(prompt: str) -> tuple[str, bool]:
     if "<start_of_turn>" in prompt:
         return prompt, False
     
-    formatted = (
-        f"<start_of_turn>user\n"
-        f"{prompt}<end_of_turn>\n"
-        f"<start_of_turn>model\n"
-    )
-    return formatted, True
+    parts = []
+    if system_prompt:
+        parts.append(f"<start_of_turn>system\n{system_prompt}<end_of_turn>\n")
+    
+    parts.append(f"<start_of_turn>user\n{prompt}<end_of_turn>\n")
+    parts.append(f"<start_of_turn>model\n")
+    
+    return "".join(parts), True
 
 
 @router.post("/generate", response_model=GenerationResponse)
@@ -86,7 +89,7 @@ async def generate_text(
     logger.info("Generating text for prompt: '%s...'", payload.prompt[:50])
     
     # Apply chat template if needed
-    prompt, template_applied = _apply_chat_template(payload.prompt)
+    prompt, template_applied = _apply_chat_template(payload.prompt, payload.system_prompt)
     if template_applied:
         logger.debug("Applied Gemma 3 chat template to raw prompt")
     
@@ -147,7 +150,7 @@ async def generate_text_stream(
     logger.info("Starting SSE stream for prompt: '%s...'", payload.prompt[:50])
     
     # Apply chat template if needed
-    prompt, template_applied = _apply_chat_template(payload.prompt)
+    prompt, template_applied = _apply_chat_template(payload.prompt, payload.system_prompt)
     if template_applied:
         logger.debug("Applied Gemma 3 chat template to raw prompt")
     
@@ -250,7 +253,7 @@ async def generate_ws(websocket: WebSocket) -> None:
             logger.info("WebSocket generation for prompt: '%s...'", payload.prompt[:50])
             
             # Apply chat template if needed
-            prompt, template_applied = _apply_chat_template(payload.prompt)
+            prompt, template_applied = _apply_chat_template(payload.prompt, payload.system_prompt)
             
             # Prepare generation parameters
             generation_params = payload.model_dump()

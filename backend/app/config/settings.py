@@ -259,7 +259,14 @@ class Settings(BaseSettings):
 
 @lru_cache()
 def get_settings() -> Settings:
-    """Return a cached settings instance."""
-
+    """Return a cached settings instance.
+    
+    During testing (TESTING=true env var), skips .env file to avoid
+    parsing issues with complex types.
+    """
+    import os
+    if os.environ.get("TESTING", "").lower() == "true":
+        return Settings(_env_file=None)
     return Settings()
+
 

@@ -20,6 +20,7 @@ type StreamEvent = {
 
 const defaultRequest = {
   prompt: "Hello!",
+  system_prompt: "",
   max_tokens: 256,
   temperature: 0.7,
   top_p: 0.95,
@@ -29,6 +30,7 @@ const defaultRequest = {
 // Parameter explanations
 const PARAM_HELP = {
   prompt: "The input text to send to the language model. Can be a question, instruction, or conversation context.",
+  systemPrompt: "Optional instructions that set the behavior, persona, or context for the model (e.g., 'You are a helpful coding assistant').",
   temperature: "Controls randomness (0-2). Lower values (0.1-0.5) make output focused and deterministic. Higher values (0.8-1.5) make output more creative and varied.",
   top_p: "Nucleus sampling (0-1). Considers tokens with cumulative probability up to this value. Lower values (0.7-0.9) make output more focused. 1.0 considers all tokens.",
   top_k: "Limits selection to top K tokens (0-100). Smaller values (10-40) make output more predictable. Higher values allow more diversity.",
@@ -228,6 +230,13 @@ export function GenerationPanel() {
       <div className="grid gap-6 lg:grid-cols-3">
         <form onSubmit={handleSubmit} className="lg:col-span-2 flex flex-col gap-4">
           <div className="rounded-xl border border-slate-800 bg-slate-900/50 p-1">
+            <textarea
+              className="w-full h-24 rounded-lg bg-transparent px-4 py-3 text-sm focus:outline-none focus:bg-slate-900/50 transition-colors resize-none placeholder:text-slate-600 border-b border-slate-800 mb-1"
+              value={request.system_prompt}
+              onChange={(event) => setRequest((prev) => ({ ...prev, system_prompt: event.target.value }))}
+              placeholder="System Prompt (Optional) - e.g., 'You are a helpful assistant'"
+              title={PARAM_HELP.systemPrompt}
+            />
             <textarea
               className="w-full h-48 rounded-lg bg-transparent px-4 py-3 text-sm focus:outline-none focus:bg-slate-900/50 transition-colors resize-none placeholder:text-slate-600"
               value={request.prompt}

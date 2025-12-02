@@ -3,6 +3,9 @@ Integration tests for GemmaVoice API endpoints.
 
 These tests run against the actual Docker containers to verify
 end-to-end functionality.
+
+Skip these tests by default unless the API service is running.
+Run with: pytest tests/integration/ --run-integration
 """
 
 import pytest
@@ -14,6 +17,16 @@ from typing import AsyncGenerator
 API_BASE_URL = "http://localhost:6666"
 TIMEOUT = 30.0
 
+# Skip all tests in this module if --run-integration is not provided
+pytestmark = pytest.mark.integration
+
+
+def pytest_configure(config):
+    """Register custom markers."""
+    config.addinivalue_line(
+        "markers", "integration: mark test as an integration test"
+    )
+
 
 @pytest.fixture(scope="module")
 def event_loop():
@@ -23,22 +36,24 @@ def event_loop():
     loop.close()
 
 
+async def check_service_available() -> bool:
+    """Check if the API service is running."""
+    try:
+        async with httpx.AsyncClient(base_url=API_BASE_URL, timeout=5.0) as client:
+            response = await client.get("/health")
+            return response.status_code == 200
+    except (httpx.ConnectError, httpx.ReadTimeout):
+        return False
+
+
 @pytest.fixture(scope="module")
 async def client() -> AsyncGenerator[httpx.AsyncClient, None]:
     """Create an async HTTP client for testing."""
+    # Check if service is available
+    if not await check_service_available():
+        pytest.skip(f"API service not available at {API_BASE_URL}")
+    
     async with httpx.AsyncClient(base_url=API_BASE_URL, timeout=TIMEOUT) as client:
-        # Wait for service to be ready
-        max_retries = 30
-        for i in range(max_retries):
-            try:
-                response = await client.get("/health")
-                if response.status_code == 200:
-                    break
-            except (httpx.ConnectError, httpx.ReadTimeout):
-                if i == max_retries - 1:
-                    raise
-                await asyncio.sleep(1)
-        
         yield client
 
 

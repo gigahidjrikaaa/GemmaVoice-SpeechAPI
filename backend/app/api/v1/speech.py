@@ -239,7 +239,10 @@ async def text_to_speech(
     
     # Check if client requested binary audio via Accept header
     accept_header = request.headers.get("accept", "")
-    if "audio/" in accept_header or payload.format in accept_header:
+    wants_binary = "audio/" in accept_header or (
+        payload.format is not None and payload.format in accept_header
+    )
+    if wants_binary:
         headers = {
             "x-audio-format": synthesis.response_format,
             "x-sample-rate": str(synthesis.sample_rate),
@@ -262,96 +265,7 @@ async def text_to_speech(
     )
 
 
-@router.post(
-    "/dialogue",
-    response_model=SpeechDialogueResponse,
-    summary="Run the full speech pipeline and return synthesised audio.",
-    tags=["Dialogue"],
-)
-async def dialogue(
-    file: UploadFile = File(..., description="Audio file containing the user utterance."),
-    instructions: str | None = Form(
-        default=None,
-        description="Optional high-level instructions that condition the assistant response.",
-    ),
-    generation_config: str | None = Form(
-        default=None,
-        description="JSON overrides for GenerationRequest fields (prompt is ignored).",
-    ),
-    synthesis_config: str | None = Form(
-        default=None,
-        description="JSON overrides for speech synthesis (text and stream are ignored).",
-    ),
-    stream_audio: bool = Form(
-        default=False,
-        description="When true, stream newline-delimited JSON events with audio chunks.",
-    ),
-    conversation_service: ConversationService = Depends(_get_conversation_service),
-):
-    """Process uploaded audio and return both transcript and synthesised reply."""
 
-    audio_bytes = await file.read()
-    if not audio_bytes:
-        raise HTTPException(status_code=400, detail="Uploaded audio file was empty")
-
-    generation_overrides = _parse_json_field(generation_config, "generation_config")
-    synthesis_overrides = _parse_json_field(synthesis_config, "synthesis_config")
-
-    try:
-        result = await conversation_service.run_dialogue(
-            audio_bytes=audio_bytes,
-            filename=file.filename or "audio.wav",
-            content_type=file.content_type,
-            instructions=instructions,
-            generation_overrides=generation_overrides,
-            synthesis_overrides=synthesis_overrides,
-            stream_audio=bool(stream_audio),
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except RuntimeError as exc:
-        logger.exception("Dialogue pipeline failed")
-        raise HTTPException(status_code=503, detail="Speech services are unavailable") from exc
-    except Exception as exc:  # pragma: no cover - defensive safeguard
-        logger.exception("Unexpected error during dialogue pipeline")
-        raise HTTPException(status_code=500, detail="Failed to process dialogue request.") from exc
-
-    transcript_model = _build_transcription_model(result.transcription)
-
-    if isinstance(result, DialogueStreamResult):
-
-        async def dialogue_stream() -> AsyncIterator[str]:
-            metadata = {
-                "response_format": result.synthesis_stream.response_format,
-                "media_type": result.synthesis_stream.media_type,
-                "sample_rate": result.synthesis_stream.sample_rate,
-            }
-            if result.synthesis_stream.reference_id is not None:
-                metadata["reference_id"] = result.synthesis_stream.reference_id
-            yield json.dumps({"event": "metadata", "data": metadata}) + "\n"
-            yield json.dumps({"event": "transcript", "data": transcript_model.model_dump()}) + "\n"
-            yield json.dumps(
-                {"event": "assistant_text", "data": {"text": result.response_text}}
-            ) + "\n"
-            async for chunk in result.synthesis_stream.iterator_factory():
-                if not chunk:
-                    continue
-                encoded = base64.b64encode(chunk).decode("ascii")
-                yield json.dumps({"event": "audio_chunk", "data": {"audio_base64": encoded}}) + "\n"
-            yield json.dumps({"event": "done"}) + "\n"
-
-        return StreamingResponse(dialogue_stream(), media_type="application/json")
-
-    synthesis = result.synthesis
-    return SpeechDialogueResponse(
-        transcript=transcript_model,
-        response_text=result.response_text,
-        audio_base64=synthesis.as_base64(),
-        response_format=synthesis.response_format,
-        media_type=synthesis.media_type,
-        sample_rate=synthesis.sample_rate,
-        reference_id=synthesis.reference_id,
-    )
 
 
 @router.websocket("/speech-to-text/ws")

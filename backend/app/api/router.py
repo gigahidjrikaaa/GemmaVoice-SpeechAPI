@@ -2,11 +2,11 @@
 
 from fastapi import APIRouter
 
-from app.api.v1 import generation, speech, health
+from app.api.v1 import generation, speech, health, conversation
 
 
 api_router = APIRouter()
 api_router.include_router(generation.router, prefix="/v1")
 api_router.include_router(speech.router, prefix="/v1")
+api_router.include_router(conversation.router, prefix="/v1")
 api_router.include_router(health.router)
-

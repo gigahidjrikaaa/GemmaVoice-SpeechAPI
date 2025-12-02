@@ -161,7 +161,8 @@ class LLMService:
             GenerationTimeoutError: If generation times out
         """
         if not self.is_ready:
-            raise ModelNotLoadedError("Model must be loaded before generating")
+            logger.info("Model not loaded, triggering lazy load...")
+            await self.startup()
 
         # Extract timeout if provided, otherwise use default
         timeout = kwargs.pop("timeout", getattr(self._settings, "llm_request_timeout", 120.0))
@@ -205,7 +206,8 @@ class LLMService:
             StreamCancelledError: If stream is cancelled
         """
         if not self.is_ready:
-            raise ModelNotLoadedError("Model must be loaded before generating")
+            logger.info("Model not loaded, triggering lazy load...")
+            await self.startup()
 
         # Ensure streaming is enabled
         kwargs["stream"] = True
