@@ -1,0 +1,35 @@
+# LiveKit Server Configuration
+# Documentation: https://docs.livekit.io/realtime/self-hosting/deployment/
+
+port: 7880
+rtc:
+  port_range_start: 50000
+  port_range_end: 60000
+  tcp_port: 7881
+  udp_port: 7882
+  use_external_ip: false
+
+# API keys - override via LIVEKIT_KEYS environment variable
+# Format: "api_key: secret"
+keys:
+  devkey: secret
+
+# Logging
+logging:
+  level: info
+  json: false
+
+# Room settings
+room:
+  auto_create: true
+  empty_timeout: 300  # 5 minutes
+  max_participants: 10
+
+# WebRTC settings
+webrtc:
+  # Enable simulcast for better quality adaptation
+  enable_loopback_candidate: true
+
+# Redis configuration (optional, for multi-node deployments)
+# redis:
+#   address: redis:6379

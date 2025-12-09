@@ -40,13 +40,24 @@ async def enforce_websocket_api_key(
     *,
     settings: Settings | None = None,
 ) -> bool:
-    """Verify API key authentication for WebSocket connections."""
+    """Verify API key authentication for WebSocket connections.
+    
+    Checks for API key in:
+    1. Headers (X-API-Key or configured header name)
+    2. Query parameters (?api_key=...)
+    """
 
     settings = settings or get_settings()
     if not settings.api_key_enabled:
         return True
 
+    # First try headers
     provided_key = _extract_header(websocket.headers.get, settings.api_key_header_name)
+    
+    # If not in headers, try query parameters (browsers can't set WS headers)
+    if provided_key is None:
+        provided_key = websocket.query_params.get("api_key")
+    
     if provided_key is None:
         await websocket.close(code=4401, reason="Missing API key")
         return False

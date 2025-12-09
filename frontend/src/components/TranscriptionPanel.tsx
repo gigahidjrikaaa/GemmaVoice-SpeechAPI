@@ -6,8 +6,9 @@ import { apiFetch, type ApiError } from "../lib/apiClient";
 import { fileToBase64 } from "../lib/audioUtils";
 import { useToast } from "./Toast";
 import { InstructionsPanel } from "./InstructionsPanel";
+import { FAQSection, type FAQItem } from "./FAQSection";
 import { AudioVisualizer } from "./AudioVisualizer";
-import { Mic, Upload, Radio, FileAudio, X, CheckCircle2 } from "lucide-react";
+import { Mic, Upload, Radio, FileAudio, X, CheckCircle2, Zap } from "lucide-react";
 
 type TranscriptionResponse = {
   text: string;
@@ -32,16 +33,76 @@ const PARAM_HELP = {
   temperature: "Sampling temperature (0-1). 0 is most deterministic and accurate. Higher values add variety but may hallucinate."
 };
 
+// FAQ items for speech-to-text
+const FAQ_ITEMS: FAQItem[] = [
+  {
+    question: "What audio formats are supported?",
+    answer: "Whisper supports WAV, MP3, MP4, MPEG, MPGA, M4A, WEBM, and OGG formats. For best results, use WAV or MP3 at 16kHz sample rate. The file size limit is typically 25MB.",
+    category: "Basics"
+  },
+  {
+    question: "What's the difference between File Upload and Live Recording?",
+    answer: "File Upload transcribes a pre-recorded audio file. Live Recording with 'Live Streaming Mode' OFF captures audio and transcribes when you stop. With 'Live Streaming Mode' ON, you get real-time transcription with partial results appearing as you speak!",
+    category: "Basics"
+  },
+  {
+    question: "Does this support Indonesian language?",
+    answer: "Yes! Whisper automatically detects and transcribes Indonesian (Bahasa Indonesia) audio. It supports over 100 languages including Indonesian, English, Chinese, Japanese, and more. No configuration needed - just speak in Indonesian.",
+    category: "Language"
+  },
+  {
+    question: "How can I improve transcription accuracy?",
+    answer: (
+      <ul className="space-y-1 mt-2">
+        <li>• Use clear audio with minimal background noise</li>
+        <li>• Speak at a normal pace with clear pronunciation</li>
+        <li>• Use a good quality microphone</li>
+        <li>• Set temperature to 0 for most accurate results</li>
+        <li>• Use verbose_json format to see segment confidence scores</li>
+      </ul>
+    ),
+    category: "Tips"
+  },
+  {
+    question: "What does the temperature parameter do?",
+    answer: "Temperature controls randomness in transcription. 0 = most deterministic and accurate (recommended). Higher values (0.2-0.5) can help with unclear audio but may introduce errors. Stick with 0 unless you have specific reasons to change it.",
+    category: "Parameters"
+  },
+  {
+    question: "Why is my transcription inaccurate or hallucinating?",
+    answer: "Hallucinations (repetitive or unrelated text) can occur with very quiet/silent audio, heavy background noise, or non-speech audio. Try: cleaning up the audio, using temperature=0, ensuring the audio actually contains speech, and checking that the audio isn't too quiet.",
+    category: "Troubleshooting"
+  },
+  {
+    question: "What's the difference between response formats?",
+    answer: (
+      <ul className="space-y-1 mt-2">
+        <li><strong>text:</strong> Plain text transcript only</li>
+        <li><strong>json:</strong> Includes text, language, duration</li>
+        <li><strong>verbose_json:</strong> Includes word-level timestamps and segments</li>
+      </ul>
+    ),
+    category: "Parameters"
+  },
+  {
+    question: "Why am I getting 503 errors?",
+    answer: "503 errors mean the Whisper service is unavailable. Check that: 1) The whisper_service container is running (docker ps), 2) The model has finished loading (can take 1-2 minutes on first start), 3) Check logs with 'docker logs whisper_service' for details.",
+    category: "Troubleshooting"
+  }
+];
+
 export function TranscriptionPanel() {
   const { config } = useClientConfig();
   const { setSnippet } = useCode();
   const { push } = useToast();
   const [options, setOptions] = useState(defaultOptions);
   const [result, setResult] = useState<TranscriptionResponse | null>(null);
+  const [interimResult, setInterimResult] = useState<string>("");
   const [isRecording, setIsRecording] = useState(false);
   const [isLiveMode, setIsLiveMode] = useState(false);
   const [audioFile, setAudioFile] = useState<File | null>(null);
   const [recordingDuration, setRecordingDuration] = useState(0);
+  const [wsStatus, setWsStatus] = useState<"disconnected" | "connecting" | "connected">("disconnected");
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
@@ -67,37 +128,51 @@ export function TranscriptionPanel() {
   // Update code snippet based on mode
   useEffect(() => {
     if (isLiveMode) {
-      const wsUrl = config.baseUrl.replace(/^http/, "ws") + "/v1/speech-to-text/ws";
-      const code = `// WebSocket Connection for Live Transcription
-const ws = new WebSocket("${wsUrl}");
+      const wsBaseUrl = config.baseUrl.replace(/^http/, "ws") + "/v1/speech-to-text/stream";
+      const wsUrlWithKey = config.apiKey ? `${wsBaseUrl}?api_key=YOUR_API_KEY` : wsBaseUrl;
+      const code = `// Real-time Streaming Speech-to-Text
+// Note: Pass API key via query parameter for WebSocket connections
+const ws = new WebSocket("${wsUrlWithKey}");
 
 ws.onopen = () => {
   // Send configuration
   ws.send(JSON.stringify({ 
-    response_format: "${options.responseFormat}", 
+    event: "config",
+    language: null, // Auto-detect
     temperature: ${options.temperature} 
   }));
 };
 
 ws.onmessage = (event) => {
   const data = JSON.parse(event.data);
-  console.log("Transcript:", data.text);
+  if (data.event === "interim") {
+    // Partial result - update UI in real-time
+    console.log("Interim:", data.data.text);
+  } else if (data.event === "final") {
+    // Final result
+    console.log("Final:", data.data.text);
+  }
 };
 
-// Send binary audio chunks
+// Stream audio chunks
 navigator.mediaDevices.getUserMedia({ audio: true })
   .then(stream => {
-    const recorder = new MediaRecorder(stream);
+    const recorder = new MediaRecorder(stream, {
+      mimeType: 'audio/webm;codecs=opus'
+    });
     recorder.ondataavailable = (e) => {
       if (e.data.size > 0) ws.send(e.data);
     };
-    recorder.start(1000);
-  });`;
+    recorder.start(500); // Send every 500ms
+  });
+
+// Stop recording
+ws.send(JSON.stringify({ event: "stop" }));`;
 
       setSnippet({
         language: "javascript",
         code,
-        title: "Live Transcription (WebSocket)"
+        title: "Real-time Streaming Transcription"
       });
     } else {
       const curl = `curl -X POST ${config.baseUrl}/v1/speech-to-text \\
@@ -158,10 +233,19 @@ navigator.mediaDevices.getUserMedia({ audio: true })
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
-      const mediaRecorder = new MediaRecorder(stream);
+      
+      // Check for supported MIME types
+      const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') 
+        ? 'audio/webm;codecs=opus' 
+        : MediaRecorder.isTypeSupported('audio/webm')
+          ? 'audio/webm'
+          : 'audio/mp4';
+      
+      const mediaRecorder = new MediaRecorder(stream, { mimeType });
       mediaRecorderRef.current = mediaRecorder;
       audioChunksRef.current = [];
       setResult(null);
+      setInterimResult("");
       setRecordingDuration(0);
 
       // Start timer
@@ -170,33 +254,79 @@ navigator.mediaDevices.getUserMedia({ audio: true })
       }, 1000);
 
       if (isLiveMode) {
-        const wsUrl = config.baseUrl.replace(/^http/, "ws") + "/v1/speech-to-text/ws";
+        // Use the new streaming endpoint for real-time transcription
+        // Pass API key via query parameter since browsers can't set WebSocket headers
+        const wsBaseUrl = config.baseUrl.replace(/^http/, "ws") + "/v1/speech-to-text/stream";
+        const wsUrl = config.apiKey ? `${wsBaseUrl}?api_key=${encodeURIComponent(config.apiKey)}` : wsBaseUrl;
         const ws = new WebSocket(wsUrl);
         wsRef.current = ws;
+        setWsStatus("connecting");
 
         ws.onopen = () => {
+          console.log("WebSocket connected for streaming transcription");
+          setWsStatus("connected");
+          
+          // Send configuration
           ws.send(JSON.stringify({
+            event: "config",
+            language: null, // Auto-detect
             response_format: options.responseFormat,
             temperature: options.temperature
           }));
         };
 
         ws.onmessage = (event) => {
-          const data = JSON.parse(event.data);
-          if (data.text) {
-            setResult(prev => ({
-              text: (prev?.text || "") + " " + data.text,
-              language: data.language
-            }));
+          try {
+            const msg = JSON.parse(event.data);
+            console.log("WebSocket message:", msg);
+            
+            if (msg.event === "interim" && msg.data) {
+              // Show interim (partial) results in real-time
+              setInterimResult(msg.data.text || "");
+            } else if (msg.event === "final" && msg.data) {
+              // Final result - append to results
+              const finalText = msg.data.text || "";
+              setInterimResult("");
+              setResult(prev => ({
+                text: prev?.text ? prev.text + " " + finalText : finalText,
+                language: msg.data.language || prev?.language,
+                segments: [...(prev?.segments || []), ...(msg.data.segments || [])]
+              }));
+            } else if (msg.event === "ready") {
+              push({ title: "Streaming ready", description: "Start speaking..." });
+            } else if (msg.event === "configured") {
+              console.log("Configuration applied:", msg.config);
+            } else if (msg.event === "error") {
+              push({ title: "Transcription error", description: msg.detail, variant: "error" });
+            } else if (msg.event === "warning") {
+              push({ title: "Warning", description: msg.detail });
+            }
+          } catch (e) {
+            console.error("Error parsing WebSocket message:", e);
           }
         };
 
-        mediaRecorder.ondataavailable = async (event) => {
+        ws.onerror = (error) => {
+          console.error("WebSocket error:", error);
+          setWsStatus("disconnected");
+          push({ title: "WebSocket error", description: "Connection failed", variant: "error" });
+        };
+        
+        ws.onclose = () => {
+          setWsStatus("disconnected");
+          console.log("WebSocket closed");
+        };
+
+        // For live streaming, send binary audio chunks directly
+        mediaRecorder.ondataavailable = (event) => {
           if (event.data.size > 0 && ws.readyState === WebSocket.OPEN) {
+            // Send raw binary audio data
             ws.send(event.data);
           }
         };
-        mediaRecorder.start(1000); // Send chunks every second
+        
+        // Start recording with smaller intervals for real-time streaming
+        mediaRecorder.start(500); // Send chunks every 500ms for smoother streaming
       } else {
         mediaRecorder.ondataavailable = (event) => {
           if (event.data.size > 0) {
@@ -231,13 +361,20 @@ navigator.mediaDevices.getUserMedia({ audio: true })
       setIsRecording(false);
       if (streamRef.current) {
         streamRef.current.getTracks().forEach(track => track.stop());
-        // Don't nullify streamRef immediately so visualizer can fade out or stop gracefully if we wanted
-        // But for now we'll keep it simple
       }
-      if (wsRef.current) {
-        wsRef.current.close();
-        wsRef.current = null;
+      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+        // Send stop event to finalize transcription
+        wsRef.current.send(JSON.stringify({ event: "stop" }));
+        // Give it a moment to process final results before closing
+        setTimeout(() => {
+          if (wsRef.current) {
+            wsRef.current.close();
+            wsRef.current = null;
+          }
+        }, 1000);
       }
+      setWsStatus("disconnected");
+      setInterimResult("");
       if (timerRef.current) {
         clearInterval(timerRef.current);
       }
@@ -347,7 +484,27 @@ navigator.mediaDevices.getUserMedia({ audio: true })
                   <div className="mt-4 flex items-center justify-center gap-2 text-emerald-400 font-mono text-sm">
                     <div className="h-2 w-2 rounded-full bg-red-500 animate-pulse" />
                     Recording {formatTime(recordingDuration)}
+                    {isLiveMode && (
+                      <span className={`ml-2 px-2 py-0.5 rounded text-xs ${
+                        wsStatus === "connected" ? "bg-emerald-500/20 text-emerald-400" :
+                        wsStatus === "connecting" ? "bg-yellow-500/20 text-yellow-400" :
+                        "bg-red-500/20 text-red-400"
+                      }`}>
+                        {wsStatus === "connected" ? "⚡ Streaming" : wsStatus === "connecting" ? "Connecting..." : "Disconnected"}
+                      </span>
+                    )}
                   </div>
+                  
+                  {/* Show interim results in real-time */}
+                  {isLiveMode && interimResult && (
+                    <div className="mt-4 p-3 rounded-lg border border-yellow-500/30 bg-yellow-500/5">
+                      <div className="flex items-center gap-2 mb-1">
+                        <Zap className="h-3 w-3 text-yellow-400 animate-pulse" />
+                        <span className="text-xs text-yellow-400 font-medium">Live transcription</span>
+                      </div>
+                      <p className="text-sm text-slate-300 italic">{interimResult}</p>
+                    </div>
+                  )}
                 </div>
               ) : (
                 <div className="w-full h-32 rounded-lg border border-dashed border-slate-800 bg-slate-950/30 flex items-center justify-center text-slate-600">
@@ -544,15 +701,33 @@ navigator.mediaDevices.getUserMedia({ audio: true })
           ) : (
             <div className="flex-1 rounded-xl border border-slate-800 bg-slate-900/20 p-8 flex flex-col items-center justify-center text-center gap-3 min-h-[300px]">
               <div className="h-12 w-12 rounded-full bg-slate-800/50 flex items-center justify-center">
-                <FileAudio className="h-6 w-6 text-slate-600" />
+                {isRecording && isLiveMode ? (
+                  <Zap className="h-6 w-6 text-yellow-400 animate-pulse" />
+                ) : (
+                  <FileAudio className="h-6 w-6 text-slate-600" />
+                )}
               </div>
               <p className="text-sm text-slate-500">
-                {isRecording ? "Listening..." : "Transcription results will appear here"}
+                {isRecording && isLiveMode 
+                  ? "Streaming transcription in progress..." 
+                  : isRecording 
+                    ? "Listening..." 
+                    : "Transcription results will appear here"}
               </p>
+              {isRecording && isLiveMode && interimResult && (
+                <p className="text-sm text-yellow-400 italic mt-2">"{interimResult}"</p>
+              )}
             </div>
           )}
         </div>
       </div>
+
+      {/* FAQ Section */}
+      <FAQSection
+        title="❓ Speech-to-Text FAQ"
+        description="Common questions about transcription with Whisper"
+        items={FAQ_ITEMS}
+      />
     </div>
   );
 }

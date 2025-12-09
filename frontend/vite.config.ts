@@ -10,5 +10,13 @@ export default defineConfig({
   preview: {
     port: 5173,
     host: "0.0.0.0"
+  },
+  optimizeDeps: {
+    exclude: ['onnxruntime-web']
+  },
+  build: {
+    commonjsOptions: {
+      exclude: ['onnxruntime-web']
+    }
   }
 });

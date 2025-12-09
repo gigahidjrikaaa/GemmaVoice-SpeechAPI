@@ -1,14 +1,17 @@
-import { ChangeEvent, FormEvent, useEffect, useRef, useState } from "react";
+import { ChangeEvent, FormEvent, useEffect, useRef, useState, useCallback } from "react";
 import { useClientConfig } from "../context/ConfigContext";
 import { useCode } from "../context/CodeContext";
 import { apiFetch, apiFetchStream } from "../lib/apiClient";
 import { base64ToBlob, fileToBase64 } from "../lib/audioUtils";
 import { useToast } from "./Toast";
 import { InstructionsPanel } from "./InstructionsPanel";
+import { FAQSection, type FAQItem } from "./FAQSection";
 import { AudioVisualizer } from "./AudioVisualizer";
+import { useVAD, float32ToWav } from "../hooks/useVAD";
+import { LiveKitVoiceChat } from "./LiveKitVoiceChat";
 import {
     MessageSquare, Upload, Play, Radio, FileAudio,
-    User, Bot, Volume2, Mic, Activity
+    User, Bot, Volume2, Mic, Activity, Zap, Hand, Wifi, Server
 } from "lucide-react";
 
 // --- Types ---
@@ -41,6 +44,67 @@ const PARAM_HELP = {
     streamAudio: "If enabled, audio response is streamed back in chunks for lower latency."
 };
 
+// FAQ items for voice chat
+const FAQ_ITEMS: FAQItem[] = [
+    {
+        question: "What's the difference between Live Chat and File Analysis?",
+        answer: "Live Chat uses WebSocket for real-time voice conversation - you speak, and the AI responds immediately. File Analysis processes a pre-recorded audio file and returns transcription, AI response, and synthesized audio. Use Live Chat for interactive conversations; File Analysis for processing existing recordings.",
+        category: "Basics"
+    },
+    {
+        question: "Does Voice Chat support Indonesian?",
+        answer: "Yes! Voice Chat combines Whisper (STT) + Gemma 3 (LLM) + OpenAudio (TTS), all of which support Indonesian. You can speak in Indonesian, and the AI will understand and respond in Indonesian. Set your instructions to include 'Respond in Indonesian' for best results.",
+        category: "Language"
+    },
+    {
+        question: "How do system instructions work?",
+        answer: (
+            <div className="space-y-2">
+                <p>System instructions define the AI's persona and behavior. Examples:</p>
+                <ul className="list-disc ml-4 space-y-1">
+                    <li>"You are a helpful voice assistant. Keep responses concise."</li>
+                    <li>"Anda adalah asisten virtual berbahasa Indonesia yang ramah."</li>
+                    <li>"You are a technical support agent who helps troubleshoot software."</li>
+                </ul>
+            </div>
+        ),
+        category: "Configuration"
+    },
+    {
+        question: "Why is Live Chat not connecting?",
+        answer: "Live Chat uses WebSocket, which requires: 1) Microphone permissions granted in your browser, 2) HTTPS or localhost (WebSockets may be blocked on insecure HTTP), 3) All backend services running (gemma_service, whisper_service, openaudio_api). Check browser console for specific errors.",
+        category: "Troubleshooting"
+    },
+    {
+        question: "How can I improve response quality?",
+        answer: (
+            <ul className="space-y-1 mt-2">
+                <li>• Use a good quality microphone in a quiet environment</li>
+                <li>• Speak clearly and at a normal pace</li>
+                <li>• Write clear, specific system instructions</li>
+                <li>• Use headphones to prevent echo (especially in Live Chat)</li>
+                <li>• For File Analysis, ensure audio is clear without background noise</li>
+            </ul>
+        ),
+        category: "Tips"
+    },
+    {
+        question: "What happens if I get audio feedback/echo in Live Chat?",
+        answer: "Use headphones! Without them, the AI's audio response can be picked up by your microphone, creating echo. This is especially important in Live Chat mode where the conversation is continuous.",
+        category: "Troubleshooting"
+    },
+    {
+        question: "What audio formats work for File Analysis?",
+        answer: "File Analysis accepts WAV, MP3, WEBM, and most common audio formats. Maximum file size is typically 10MB. For best results, use clear audio recordings with minimal background noise.",
+        category: "Basics"
+    },
+    {
+        question: "Can I use Voice Chat for long conversations?",
+        answer: "Live Chat is designed for short, interactive exchanges. For longer conversations, consider using File Analysis with longer recordings, or use the Text Generation tab for extended written conversations. The WebSocket connection may timeout after extended periods of inactivity.",
+        category: "Limitations"
+    }
+];
+
 // --- Main Component ---
 
 export function VoiceChatPanel() {
@@ -48,18 +112,27 @@ export function VoiceChatPanel() {
     const { setSnippet } = useCode();
     const { push } = useToast();
 
+    const [connectionMode, setConnectionMode] = useState<"websocket" | "livekit">("websocket");
     const [activeMode, setActiveMode] = useState<"live" | "file">("live");
+    const [inputMode, setInputMode] = useState<"vad" | "push">("vad"); // VAD or Push-to-talk
 
     // --- Live Chat State ---
     const [isConnected, setIsConnected] = useState(false);
+    const [isRecording, setIsRecording] = useState(false);
     const [messages, setMessages] = useState<Message[]>([]);
     const [status, setStatus] = useState<string>("Ready to connect");
+    const [audioBytes, setAudioBytes] = useState(0);
+    const [recordingTime, setRecordingTime] = useState(0);
+    const [chunksSent, setChunksSent] = useState(0);
+    const [speechProbability, setSpeechProbability] = useState(0);
     const wsRef = useRef<WebSocket | null>(null);
     const mediaRecorderRef = useRef<MediaRecorder | null>(null);
     const streamRef = useRef<MediaStream | null>(null);
     const audioQueueRef = useRef<string[]>([]);
     const isPlayingRef = useRef(false);
     const audioContextRef = useRef<AudioContext | null>(null);
+    const recordingTimerRef = useRef<NodeJS.Timeout | null>(null);
+    const vadStartTimeRef = useRef<number | null>(null);
 
     // --- File Analysis State ---
     const fileInputRef = useRef<HTMLInputElement>(null);
@@ -71,13 +144,78 @@ export function VoiceChatPanel() {
     const [isProcessing, setIsProcessing] = useState(false);
     const [fileName, setFileName] = useState<string | null>(null);
 
+    // --- VAD Speech Detection Callbacks ---
+    const handleSpeechStart = useCallback(() => {
+        console.log("[VAD] Speech started");
+        vadStartTimeRef.current = Date.now();
+        setIsRecording(true);
+        setRecordingTime(0);
+        setStatus("🎙️ Listening...");
+        
+        // Start recording time counter
+        recordingTimerRef.current = setInterval(() => {
+            setRecordingTime(prev => prev + 0.1);
+        }, 100);
+    }, []);
+
+    const handleSpeechEnd = useCallback(async (audio: Float32Array) => {
+        console.log("[VAD] Speech ended, samples:", audio.length);
+        
+        // Stop the timer
+        if (recordingTimerRef.current) {
+            clearInterval(recordingTimerRef.current);
+            recordingTimerRef.current = null;
+        }
+        
+        setIsRecording(false);
+        setStatus("⏳ Processing...");
+        
+        // Convert Float32Array to WAV and send
+        if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+            try {
+                const wavBlob = float32ToWav(audio, 16000);
+                const base64 = await fileToBase64(wavBlob);
+                console.log("[VAD] Sending audio, base64 length:", base64.length);
+                
+                wsRef.current.send(JSON.stringify({
+                    type: "audio",
+                    data: base64,
+                    format: "wav" // Tell backend it's already WAV
+                }));
+                
+                // Send end_turn immediately since VAD already detected speech end
+                wsRef.current.send(JSON.stringify({ type: "end_turn" }));
+                setChunksSent(1);
+            } catch (err) {
+                console.error("[VAD] Error sending audio:", err);
+                setStatus("Error sending audio");
+            }
+        }
+    }, []);
+
+    const handleFrameProcessed = useCallback((probs: { isSpeech: number; notSpeech: number }) => {
+        setSpeechProbability(probs.isSpeech);
+    }, []);
+
+    // --- VAD Hook ---
+    const vad = useVAD({
+        onSpeechStart: handleSpeechStart,
+        onSpeechEnd: handleSpeechEnd,
+        onFrameProcessed: handleFrameProcessed,
+        positiveSpeechThreshold: 0.6,
+        negativeSpeechThreshold: 0.4,
+        redemptionMs: 400, // 400ms of silence before ending
+        minSpeechMs: 200, // Require 200ms of speech to trigger
+    });
+
     // --- Cleanup ---
     useEffect(() => {
         return () => {
             stopConversation();
+            vad.stop();
             if (objectUrl) URL.revokeObjectURL(objectUrl);
         };
-    }, [objectUrl]);
+    }, [objectUrl, vad]);
 
     // --- Code Snippet Updates ---
     useEffect(() => {
@@ -159,60 +297,89 @@ ws.onmessage = (event) => {
 
     const startConversation = async () => {
         try {
+            // For VAD mode, we don't need getUserMedia here - VAD handles it
+            if (inputMode === "vad") {
+                // First establish WebSocket connection
+                const wsBaseUrl = config.baseUrl.replace(/^http/, "ws") + "/v1/conversation/ws";
+                const wsUrl = config.apiKey ? `${wsBaseUrl}?api_key=${encodeURIComponent(config.apiKey)}` : wsBaseUrl;
+                const ws = new WebSocket(wsUrl);
+                wsRef.current = ws;
+
+                ws.onopen = async () => {
+                    setIsConnected(true);
+                    setStatus("🔄 Starting VAD...");
+                    push({ title: "Connected - starting voice detection" });
+                    
+                    // Start VAD after WebSocket is connected
+                    try {
+                        await vad.start();
+                        setStatus("🎤 Listening for speech...");
+                    } catch (err) {
+                        console.error("[VAD] Failed to start:", err);
+                        push({ title: "VAD Error", description: "Failed to start voice detection", variant: "error" });
+                        setStatus("VAD failed - try Push-to-Talk mode");
+                    }
+                };
+
+                ws.onmessage = handleWebSocketMessage;
+                ws.onclose = handleWebSocketClose;
+                ws.onerror = handleWebSocketError;
+                return;
+            }
+
+            // Push-to-talk mode: use MediaRecorder
             const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
             streamRef.current = stream;
 
-            const wsUrl = config.baseUrl.replace(/^http/, "ws") + "/v1/conversation/ws";
+            // Pass API key via query parameter since browsers can't set WebSocket headers
+            const wsBaseUrl = config.baseUrl.replace(/^http/, "ws") + "/v1/conversation/ws";
+            const wsUrl = config.apiKey ? `${wsBaseUrl}?api_key=${encodeURIComponent(config.apiKey)}` : wsBaseUrl;
             const ws = new WebSocket(wsUrl);
             wsRef.current = ws;
 
             ws.onopen = () => {
                 setIsConnected(true);
-                setStatus("Connected");
+                setStatus("Connected - Hold mic button to speak");
                 push({ title: "Connected to conversation server" });
 
                 const mediaRecorder = new MediaRecorder(stream);
                 mediaRecorderRef.current = mediaRecorder;
 
                 mediaRecorder.ondataavailable = async (event) => {
+                    console.log("[VoiceChat] ondataavailable fired, size:", event.data.size, "bytes, WS state:", ws.readyState);
                     if (event.data.size > 0 && ws.readyState === WebSocket.OPEN) {
-                        const base64Audio = await fileToBase64(event.data);
-                        ws.send(JSON.stringify({
-                            type: "audio",
-                            data: base64Audio.split(',')[1]
-                        }));
+                        try {
+                            const base64Audio = await fileToBase64(event.data);
+                            console.log("[VoiceChat] Sending chunk, base64 length:", base64Audio.length);
+                            ws.send(JSON.stringify({
+                                type: "audio",
+                                data: base64Audio
+                            }));
+                            setChunksSent(prev => prev + 1);
+                        } catch (err) {
+                            console.error("[VoiceChat] Error converting audio chunk:", err);
+                        }
                     }
                 };
-
-                mediaRecorder.start(1000); // Send chunks every 1s
+                
+                mediaRecorder.onstart = () => {
+                    console.log("[VoiceChat] MediaRecorder started");
+                };
+                
+                mediaRecorder.onstop = () => {
+                    console.log("[VoiceChat] MediaRecorder stopped");
+                };
+                
+                mediaRecorder.onerror = (e) => {
+                    console.error("[VoiceChat] MediaRecorder error:", e);
+                };
+                
+                // Don't auto-start recording - wait for push-to-talk
             };
 
-            ws.onmessage = (event) => {
-                const data = JSON.parse(event.data);
-
-                if (data.type === "text") {
-                    setMessages(prev => [...prev, { role: data.role, content: data.content }]);
-                } else if (data.type === "audio") {
-                    audioQueueRef.current.push(data.data);
-                    if (!isPlayingRef.current) {
-                        playNextAudio();
-                    }
-                } else if (data.type === "error") {
-                    push({ title: "Error", description: data.message, variant: "error" });
-                }
-            };
-
-            ws.onclose = () => {
-                setIsConnected(false);
-                setStatus("Disconnected");
-                stopConversation();
-            };
-
-            ws.onerror = (error) => {
-                console.error("WebSocket error:", error);
-                push({ title: "Connection error", description: "WebSocket connection failed", variant: "error" });
-                stopConversation();
-            };
+            ws.onmessage = handleWebSocketMessage;
+            ws.onclose = handleWebSocketClose;
+            ws.onerror = handleWebSocketError;
 
         } catch (error) {
             console.error("Error accessing microphone:", error);
@@ -220,9 +387,111 @@ ws.onmessage = (event) => {
         }
     };
 
-    const stopConversation = () => {
-        if (mediaRecorderRef.current) {
+    // --- WebSocket Event Handlers ---
+    const handleWebSocketMessage = useCallback((event: MessageEvent) => {
+        const data = JSON.parse(event.data);
+        console.log("Voice chat message:", data);
+
+        if (data.type === "ready") {
+            if (inputMode === "vad") {
+                setStatus("🎤 Listening for speech...");
+            } else {
+                setStatus("✅ " + (data.message || "Ready"));
+            }
+        } else if (data.type === "buffering") {
+            setAudioBytes(data.bytes || 0);
+        } else if (data.type === "processing") {
+            setStatus(data.message || "Processing...");
+        } else if (data.type === "transcript") {
+            setMessages(prev => [...prev, { role: data.role, content: data.content }]);
+            if (inputMode === "vad") {
+                setStatus("🎤 Listening for speech...");
+            }
+        } else if (data.type === "text") {
+            setMessages(prev => [...prev, { role: data.role, content: data.content }]);
+        } else if (data.type === "audio") {
+            audioQueueRef.current.push(data.data);
+            if (!isPlayingRef.current) {
+                playNextAudio();
+            }
+        } else if (data.type === "error") {
+            push({ title: "Error", description: data.message, variant: "error" });
+            setStatus("Error - try again");
+        }
+    }, [inputMode, push]);
+
+    const handleWebSocketClose = useCallback(() => {
+        setIsConnected(false);
+        setStatus("Disconnected");
+        stopConversation();
+    }, []);
+
+    const handleWebSocketError = useCallback((error: Event) => {
+        console.error("WebSocket error:", error);
+        push({ title: "Connection error", description: "WebSocket connection failed", variant: "error" });
+        stopConversation();
+    }, [push]);
+    
+    const startRecording = () => {
+        console.log("[VoiceChat] startRecording called, mediaRecorder state:", mediaRecorderRef.current?.state);
+        if (mediaRecorderRef.current && mediaRecorderRef.current.state === "inactive") {
+            setAudioBytes(0);
+            setChunksSent(0);
+            setRecordingTime(0);
+            
+            // Start the stopwatch
+            recordingTimerRef.current = setInterval(() => {
+                setRecordingTime(prev => prev + 0.1);
+            }, 100);
+            
+            mediaRecorderRef.current.start(250); // Send chunks every 250ms
+            setIsRecording(true);
+            setStatus("🎙️ Recording... Release to send");
+            console.log("[VoiceChat] MediaRecorder.start(250) called");
+        } else {
+            console.warn("[VoiceChat] Cannot start recording - recorder state:", mediaRecorderRef.current?.state);
+        }
+    };
+    
+    const stopRecording = () => {
+        console.log("[VoiceChat] stopRecording called, mediaRecorder state:", mediaRecorderRef.current?.state);
+        
+        // Stop the stopwatch
+        if (recordingTimerRef.current) {
+            clearInterval(recordingTimerRef.current);
+            recordingTimerRef.current = null;
+        }
+        
+        if (mediaRecorderRef.current && mediaRecorderRef.current.state === "recording") {
             mediaRecorderRef.current.stop();
+            setIsRecording(false);
+            setStatus("⏳ Processing...");
+            console.log("[VoiceChat] MediaRecorder.stop() called");
+            
+            // Send end_turn signal after a longer delay to ensure all chunks are sent
+            setTimeout(() => {
+                if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+                    console.log("[VoiceChat] Sending end_turn signal");
+                    wsRef.current.send(JSON.stringify({ type: "end_turn" }));
+                }
+            }, 300);
+        }
+    };
+
+    const stopConversation = () => {
+        // Stop VAD if running
+        vad.stop();
+        
+        // Stop timer
+        if (recordingTimerRef.current) {
+            clearInterval(recordingTimerRef.current);
+            recordingTimerRef.current = null;
+        }
+        
+        if (mediaRecorderRef.current) {
+            if (mediaRecorderRef.current.state === "recording") {
+                mediaRecorderRef.current.stop();
+            }
             mediaRecorderRef.current = null;
         }
         if (streamRef.current) {
@@ -234,6 +503,7 @@ ws.onmessage = (event) => {
             wsRef.current = null;
         }
         setIsConnected(false);
+        setIsRecording(false);
         setStatus("Disconnected");
     };
 
@@ -393,21 +663,65 @@ ws.onmessage = (event) => {
                 ]}
             />
 
-            {/* Mode Switcher */}
-            <div className="flex p-1 bg-slate-900/50 rounded-lg border border-slate-800 w-fit">
-                <button
-                    onClick={() => setActiveMode("live")}
-                    className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-all ${activeMode === "live"
-                            ? "bg-emerald-500 text-slate-950 shadow-lg shadow-emerald-500/20"
-                            : "text-slate-400 hover:text-slate-200"
+            {/* Connection Mode Selector (WebSocket vs LiveKit) */}
+            <div className="flex items-center gap-4">
+                <span className="text-xs text-slate-500 uppercase tracking-wider">Connection:</span>
+                <div className="flex p-1 bg-slate-900/50 rounded-lg border border-slate-800">
+                    <button
+                        onClick={() => setConnectionMode("websocket")}
+                        className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
+                            connectionMode === "websocket"
+                                ? "bg-blue-500 text-slate-950 shadow-lg shadow-blue-500/20"
+                                : "text-slate-400 hover:text-slate-200"
                         }`}
-                >
-                    <Mic className="h-4 w-4" />
-                    Live Chat
-                </button>
-                <button
-                    onClick={() => setActiveMode("file")}
-                    className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-all ${activeMode === "file"
+                    >
+                        <Wifi className="h-3 w-3" />
+                        WebSocket
+                    </button>
+                    <button
+                        onClick={() => setConnectionMode("livekit")}
+                        className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
+                            connectionMode === "livekit"
+                                ? "bg-purple-500 text-slate-950 shadow-lg shadow-purple-500/20"
+                                : "text-slate-400 hover:text-slate-200"
+                        }`}
+                    >
+                        <Server className="h-3 w-3" />
+                        LiveKit
+                    </button>
+                </div>
+                <span className="text-xs text-slate-600">
+                    {connectionMode === "livekit" 
+                        ? "Low-latency SFU for production" 
+                        : "Direct WebSocket for development"}
+                </span>
+            </div>
+
+            {/* LiveKit Mode */}
+            {connectionMode === "livekit" && (
+                <div className="rounded-xl border border-slate-800 bg-slate-900/50 overflow-hidden" style={{ minHeight: "400px" }}>
+                    <LiveKitVoiceChat />
+                </div>
+            )}
+
+            {/* WebSocket Mode - Original UI */}
+            {connectionMode === "websocket" && (
+                <>
+                    {/* Mode Switcher */}
+                    <div className="flex p-1 bg-slate-900/50 rounded-lg border border-slate-800 w-fit">
+                        <button
+                            onClick={() => setActiveMode("live")}
+                            className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-all ${activeMode === "live"
+                                    ? "bg-emerald-500 text-slate-950 shadow-lg shadow-emerald-500/20"
+                                    : "text-slate-400 hover:text-slate-200"
+                                }`}
+                        >
+                            <Mic className="h-4 w-4" />
+                            Live Chat
+                        </button>
+                        <button
+                            onClick={() => setActiveMode("file")}
+                            className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-all ${activeMode === "file"
                             ? "bg-emerald-500 text-slate-950 shadow-lg shadow-emerald-500/20"
                             : "text-slate-400 hover:text-slate-200"
                         }`}
@@ -424,46 +738,208 @@ ws.onmessage = (event) => {
                     {/* LIVE CHAT MODE */}
                     {activeMode === "live" && (
                         <div className="rounded-xl border border-slate-800 bg-slate-900/50 p-6 flex flex-col items-center gap-6 relative overflow-hidden">
-                            <div className={`absolute top-4 right-4 flex items-center gap-2 text-xs font-mono px-2 py-1 rounded-full border ${isConnected
-                                ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-400"
-                                : "border-slate-700 bg-slate-800/50 text-slate-400"
+                            {/* Status bar */}
+                            <div className={`w-full flex items-center justify-between text-xs font-mono px-3 py-2 rounded-lg border ${
+                                isRecording
+                                    ? "border-red-500/50 bg-red-500/10 text-red-400"
+                                    : isConnected
+                                        ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-400"
+                                        : "border-slate-700 bg-slate-800/50 text-slate-400"
                                 }`}>
-                                <div className={`h-2 w-2 rounded-full ${isConnected ? "bg-emerald-500 animate-pulse" : "bg-slate-500"}`} />
-                                {status}
+                                <div className="flex items-center gap-2">
+                                    <div className={`h-2 w-2 rounded-full ${
+                                        isRecording ? "bg-red-500 animate-pulse" : isConnected ? "bg-emerald-500 animate-pulse" : "bg-slate-500"
+                                    }`} />
+                                    <span>{status}</span>
+                                </div>
+                                {isRecording && (
+                                    <span className="text-red-300">{(audioBytes / 1024).toFixed(1)} KB</span>
+                                )}
                             </div>
 
-                            <div className="w-full h-48 rounded-lg border border-slate-800 bg-slate-950/50 relative overflow-hidden">
+                            {/* Audio Visualizer */}
+                            <div className={`w-full h-40 rounded-lg border bg-slate-950/50 relative overflow-hidden transition-all ${
+                                isRecording ? "border-red-500/50 shadow-lg shadow-red-500/10" : "border-slate-800"
+                            }`}>
                                 {isConnected ? (
                                     <AudioVisualizer stream={streamRef.current} className="w-full h-full" />
                                 ) : (
                                     <div className="absolute inset-0 flex items-center justify-center text-slate-600">
                                         <div className="text-center">
-                                            <Radio className="h-12 w-12 mx-auto mb-2 opacity-20" />
-                                            <p className="text-sm">Visualizer ready</p>
+                                            <Radio className="h-10 w-10 mx-auto mb-2 opacity-20" />
+                                            <p className="text-sm">Click Connect to start</p>
                                         </div>
                                     </div>
                                 )}
+                                {isRecording && (
+                                    <div className="absolute inset-0 border-4 border-red-500/30 rounded-lg pointer-events-none animate-pulse" />
+                                )}
                             </div>
 
-                            <button
-                                onClick={toggleConnection}
-                                className={`rounded-full px-8 py-4 font-bold text-sm transition-all flex items-center gap-3 shadow-lg ${isConnected
-                                    ? "bg-red-500 text-white hover:bg-red-600 hover:shadow-red-500/20"
-                                    : "bg-emerald-500 text-slate-950 hover:bg-emerald-400 hover:shadow-emerald-500/20"
-                                    }`}
-                            >
-                                {isConnected ? (
+                            {/* Main Controls */}
+                            <div className="flex flex-col items-center gap-4 w-full">
+                                {!isConnected ? (
                                     <>
-                                        <div className="h-3 w-3 rounded bg-white" />
-                                        End Conversation
+                                        {/* Input Mode Toggle */}
+                                        <div className="flex gap-2 p-1 bg-slate-800/50 rounded-lg border border-slate-700">
+                                            <button
+                                                onClick={() => setInputMode("vad")}
+                                                className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm transition-all ${
+                                                    inputMode === "vad"
+                                                        ? "bg-emerald-500 text-slate-950 font-medium"
+                                                        : "text-slate-400 hover:text-slate-200"
+                                                }`}
+                                            >
+                                                <Zap className="h-4 w-4" />
+                                                Auto Detect (VAD)
+                                            </button>
+                                            <button
+                                                onClick={() => setInputMode("push")}
+                                                className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm transition-all ${
+                                                    inputMode === "push"
+                                                        ? "bg-blue-500 text-white font-medium"
+                                                        : "text-slate-400 hover:text-slate-200"
+                                                }`}
+                                            >
+                                                <Hand className="h-4 w-4" />
+                                                Push-to-Talk
+                                            </button>
+                                        </div>
+                                        
+                                        <p className="text-slate-500 text-xs text-center max-w-xs">
+                                            {inputMode === "vad" 
+                                                ? "VAD mode: AI automatically detects when you start and stop speaking"
+                                                : "Push-to-Talk: Hold the button while speaking"}
+                                        </p>
+                                        
+                                        <button
+                                            onClick={toggleConnection}
+                                            className="rounded-full px-8 py-4 font-bold text-sm transition-all flex items-center gap-3 shadow-lg bg-emerald-500 text-slate-950 hover:bg-emerald-400 hover:shadow-emerald-500/20 hover:scale-105"
+                                        >
+                                            <Radio className="h-5 w-5" />
+                                            Connect to Voice Chat
+                                        </button>
+                                    </>
+                                ) : inputMode === "vad" ? (
+                                    /* VAD Mode UI */
+                                    <>
+                                        {/* Speech Probability Indicator */}
+                                        <div className="w-full max-w-xs">
+                                            <div className="flex justify-between text-xs text-slate-500 mb-1">
+                                                <span>Speech Detection</span>
+                                                <span>{(speechProbability * 100).toFixed(0)}%</span>
+                                            </div>
+                                            <div className="h-2 bg-slate-800 rounded-full overflow-hidden">
+                                                <div 
+                                                    className={`h-full transition-all duration-100 ${
+                                                        isRecording ? "bg-red-500" : speechProbability > 0.5 ? "bg-emerald-500" : "bg-slate-600"
+                                                    }`}
+                                                    style={{ width: `${speechProbability * 100}%` }}
+                                                />
+                                            </div>
+                                        </div>
+                                        
+                                        {/* VAD Status Circle */}
+                                        <div className={`w-32 h-32 rounded-full flex flex-col items-center justify-center shadow-xl transition-all ${
+                                            vad.isLoading
+                                                ? "bg-slate-700 animate-pulse"
+                                                : isRecording
+                                                    ? "bg-red-500 text-white scale-110 shadow-red-500/40"
+                                                    : vad.isListening
+                                                        ? "bg-gradient-to-br from-emerald-500 to-emerald-600 text-white"
+                                                        : "bg-slate-700 text-slate-400"
+                                        }`}>
+                                            <Mic className={`h-10 w-10 mb-1 ${isRecording ? "animate-pulse" : ""}`} />
+                                            {vad.isLoading ? (
+                                                <span className="text-xs">Loading VAD...</span>
+                                            ) : isRecording ? (
+                                                <span className="text-lg font-mono tabular-nums">
+                                                    {recordingTime.toFixed(1)}s
+                                                </span>
+                                            ) : (
+                                                <span className="text-xs opacity-80">
+                                                    {vad.isListening ? "Listening..." : "Starting..."}
+                                                </span>
+                                            )}
+                                        </div>
+                                        
+                                        {/* Recording Stats */}
+                                        {isRecording && (
+                                            <div className="flex gap-4 text-xs text-slate-400">
+                                                <span>⏱️ {recordingTime.toFixed(1)}s</span>
+                                            </div>
+                                        )}
+                                        
+                                        <p className="text-slate-500 text-xs text-center max-w-xs">
+                                            {vad.isLoading 
+                                                ? "Loading voice activity detection model..."
+                                                : isRecording 
+                                                    ? "Speaking detected! Keep talking..." 
+                                                    : "Just start speaking - I'll detect when you're done"}
+                                        </p>
+                                        
+                                        {vad.error && (
+                                            <p className="text-red-400 text-xs text-center">
+                                                VAD Error: {vad.error}
+                                            </p>
+                                        )}
+                                        
+                                        <button
+                                            onClick={toggleConnection}
+                                            className="rounded-full px-4 py-2 text-xs transition-all flex items-center gap-2 text-red-400 hover:text-red-300 hover:bg-red-500/10 border border-red-500/30"
+                                        >
+                                            <div className="h-2 w-2 rounded bg-red-400" />
+                                            Disconnect
+                                        </button>
                                     </>
                                 ) : (
+                                    /* Push-to-Talk Mode UI */
                                     <>
-                                        <Mic className="h-5 w-5" />
-                                        Start Conversation
+                                        {/* Large Push-to-Talk Button */}
+                                        <button
+                                            onMouseDown={startRecording}
+                                            onMouseUp={stopRecording}
+                                            onMouseLeave={stopRecording}
+                                            onTouchStart={startRecording}
+                                            onTouchEnd={stopRecording}
+                                            className={`w-32 h-32 rounded-full font-bold text-sm transition-all flex flex-col items-center justify-center shadow-xl select-none ${
+                                                isRecording
+                                                    ? "bg-red-500 text-white scale-110 shadow-red-500/40"
+                                                    : "bg-gradient-to-br from-blue-500 to-blue-600 text-white hover:from-blue-400 hover:to-blue-500 hover:shadow-blue-500/30 hover:scale-105 active:scale-95"
+                                            }`}
+                                        >
+                                            <Mic className={`h-10 w-10 mb-1 ${isRecording ? "animate-pulse" : ""}`} />
+                                            {isRecording ? (
+                                                <span className="text-lg font-mono tabular-nums">
+                                                    {recordingTime.toFixed(1)}s
+                                                </span>
+                                            ) : (
+                                                <span className="text-xs opacity-80">Hold to Speak</span>
+                                            )}
+                                        </button>
+                                        
+                                        {/* Recording Stats */}
+                                        {isRecording && (
+                                            <div className="flex gap-4 text-xs text-slate-400">
+                                                <span>⏱️ {recordingTime.toFixed(1)}s</span>
+                                                <span>📦 {chunksSent} chunks</span>
+                                            </div>
+                                        )}
+                                        
+                                        <p className="text-slate-500 text-xs text-center max-w-xs">
+                                            Hold the button while speaking, then release to send your message
+                                        </p>
+                                        
+                                        <button
+                                            onClick={toggleConnection}
+                                            className="rounded-full px-4 py-2 text-xs transition-all flex items-center gap-2 text-red-400 hover:text-red-300 hover:bg-red-500/10 border border-red-500/30"
+                                        >
+                                            <div className="h-2 w-2 rounded bg-red-400" />
+                                            Disconnect
+                                        </button>
                                     </>
                                 )}
-                            </button>
+                            </div>
                         </div>
                     )}
 
@@ -643,6 +1119,15 @@ ws.onmessage = (event) => {
                     </div>
                 </div>
             </div>
+                </>
+            )}
+
+            {/* FAQ Section */}
+            <FAQSection
+                title="❓ Voice Chat FAQ"
+                description="Common questions about voice-based conversation with Gemma 3"
+                items={FAQ_ITEMS}
+            />
         </div>
     );
 }

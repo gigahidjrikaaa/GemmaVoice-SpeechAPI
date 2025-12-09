@@ -97,6 +97,9 @@ async def generate_text(
     generation_params = payload.model_dump()
     generation_params["prompt"] = prompt
     
+    # Remove system_prompt as it's already been applied via chat template
+    generation_params.pop("system_prompt", None)
+    
     # Filter out empty stop sequences
     if "stop" in generation_params and generation_params["stop"]:
         generation_params["stop"] = [s for s in generation_params["stop"] if s]
@@ -157,6 +160,9 @@ async def generate_text_stream(
     # Prepare generation parameters
     generation_params = payload.model_dump()
     generation_params["prompt"] = prompt
+    
+    # Remove system_prompt as it's already been applied via chat template
+    generation_params.pop("system_prompt", None)
     
     # Filter out empty stop sequences
     if "stop" in generation_params and generation_params["stop"]:
@@ -258,6 +264,9 @@ async def generate_ws(websocket: WebSocket) -> None:
             # Prepare generation parameters
             generation_params = payload.model_dump()
             generation_params["prompt"] = prompt
+            
+            # Remove system_prompt as it's already been applied via chat template
+            generation_params.pop("system_prompt", None)
             
             # Filter out empty stop sequences
             if "stop" in generation_params and generation_params["stop"]:

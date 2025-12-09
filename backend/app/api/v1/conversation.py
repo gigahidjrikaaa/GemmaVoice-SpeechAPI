@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 import base64
+import io
 import json
 import logging
 import asyncio
+import os
+import subprocess
+import tempfile
 from typing import Any, AsyncIterator, Dict
 
 from fastapi import (
@@ -37,10 +41,62 @@ from app.security import (
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(
-    tags=["Conversation"],
-    dependencies=[Depends(require_api_key), Depends(enforce_rate_limit)],
-)
+# Router without global dependencies - WebSocket routes handle auth separately
+router = APIRouter(tags=["Conversation"])
+
+# Common dependencies for HTTP routes
+http_dependencies = [Depends(require_api_key), Depends(enforce_rate_limit)]
+
+
+async def _convert_webm_to_wav(webm_data: bytes) -> bytes | None:
+    """Convert WebM audio to WAV format using FFmpeg.
+    
+    Returns WAV bytes or None if conversion fails.
+    """
+    try:
+        # Write WebM to temp file
+        with tempfile.NamedTemporaryFile(suffix=".webm", delete=False) as webm_file:
+            webm_file.write(webm_data)
+            webm_path = webm_file.name
+        
+        # Create output WAV path
+        wav_path = webm_path.replace(".webm", ".wav")
+        
+        try:
+            # Use FFmpeg to convert WebM to WAV (16kHz mono for Whisper)
+            result = subprocess.run(
+                [
+                    "ffmpeg", "-y",  # Overwrite output
+                    "-i", webm_path,  # Input file
+                    "-vn",  # No video
+                    "-acodec", "pcm_s16le",  # PCM 16-bit
+                    "-ar", "16000",  # 16kHz sample rate (optimal for Whisper)
+                    "-ac", "1",  # Mono
+                    wav_path
+                ],
+                capture_output=True,
+                timeout=30
+            )
+            
+            if result.returncode != 0:
+                logger.error("FFmpeg conversion failed: %s", result.stderr.decode())
+                return None
+            
+            # Read the WAV file
+            with open(wav_path, "rb") as wav_file:
+                return wav_file.read()
+                
+        finally:
+            # Cleanup temp files
+            for path in [webm_path, wav_path]:
+                try:
+                    os.unlink(path)
+                except OSError:
+                    pass
+                    
+    except Exception as e:
+        logger.error("Error converting WebM to WAV: %s", e)
+        return None
 
 
 def _parse_json_field(raw_value: str | None, field_name: str) -> Dict[str, Any]:
@@ -88,6 +144,7 @@ def _get_conversation_service(request: Request) -> ConversationService:
     response_model=SpeechDialogueResponse,
     summary="Run the full speech pipeline (STT -> LLM -> TTS) on an audio file.",
     tags=["Conversation"],
+    dependencies=http_dependencies,
 )
 async def dialogue(
     file: UploadFile = File(..., description="Audio file containing the user utterance."),
@@ -181,10 +238,13 @@ async def conversation_ws(websocket: WebSocket) -> None:
     
     Protocol:
     - Client sends JSON: {"type": "config", "data": {...}} (Optional initial config)
-    - Client sends JSON: {"type": "audio", "data": "<base64_audio>"} (Audio chunk)
+    - Client sends JSON: {"type": "audio", "data": "<base64_audio>"} (Audio chunk - WebM format from browser)
+    - Client sends JSON: {"type": "end_turn"} (Signal end of user turn to process accumulated audio)
     - Client sends JSON: {"type": "text", "data": "text input"} (Text input override)
     
     Server sends JSON:
+    - {"type": "ready", "message": "..."} (Ready to receive audio)
+    - {"type": "buffering", "chunks": N} (Audio chunk received, buffering)
     - {"type": "transcript", "role": "user", "content": "..."} (User transcript)
     - {"type": "text", "role": "assistant", "content": "..."} (Assistant response text)
     - {"type": "audio", "data": "<base64_audio>"} (Assistant response audio chunk)
@@ -206,33 +266,74 @@ async def conversation_ws(websocket: WebSocket) -> None:
         return
 
     # Session state
-    history = []  # Keep conversation history if needed
+    audio_buffer = io.BytesIO()  # Buffer for accumulating WebM chunks
+    audio_format = "webm"  # Track the audio format (webm or wav)
+    instructions = "You are a helpful voice assistant. Keep responses concise and conversational."
+    
+    await websocket.send_json({"type": "ready", "message": "Connected. Send audio chunks, then 'end_turn' to process."})
     
     try:
         while True:
             message = await websocket.receive_json()
             msg_type = message.get("type")
             
-            if msg_type == "audio":
-                # Handle audio input
-                # For a real streaming implementation, we would need a VAD and continuous streaming.
-                # For this simplified version, we assume the client sends a complete utterance or chunks 
-                # that we process immediately.
-                
-                # In a real app, you'd buffer until silence is detected.
-                # Here we'll treat each audio message as a turn for simplicity 
-                # or expect the client to handle VAD and send a full turn.
-                
+            if msg_type == "config":
+                # Update session configuration
+                config_data = message.get("data", {})
+                if "instructions" in config_data:
+                    instructions = config_data["instructions"]
+                await websocket.send_json({"type": "configured", "instructions": instructions[:50] + "..."})
+            
+            elif msg_type == "audio":
+                # Accumulate audio chunks
+                # VAD mode sends pre-converted WAV; Push-to-talk sends WebM chunks
                 try:
                     audio_data = base64.b64decode(message.get("data", ""))
+                    # Check if format is specified (VAD sends format: "wav")
+                    if message.get("format") == "wav":
+                        audio_format = "wav"
+                    audio_buffer.write(audio_data)
+                    chunk_count = audio_buffer.tell() // 1000  # Rough chunk count
+                    await websocket.send_json({"type": "buffering", "chunks": chunk_count, "bytes": audio_buffer.tell()})
+                except Exception as e:
+                    logger.error("Error decoding audio chunk: %s", e)
+                    await websocket.send_json({"type": "error", "message": "Invalid audio data"})
+            
+            elif msg_type == "end_turn":
+                # Process accumulated audio as a complete turn
+                raw_audio = audio_buffer.getvalue()
+                buffer_size = len(raw_audio)
+                logger.info("Processing end_turn with %d bytes of %s audio", buffer_size, audio_format)
+                
+                if buffer_size < 100:
+                    await websocket.send_json({"type": "error", "message": f"Not enough audio data ({buffer_size} bytes). Hold the button longer."})
+                    audio_buffer = io.BytesIO()  # Reset buffer
+                    audio_format = "webm"  # Reset format
+                    continue
+                
+                try:
+                    # Convert to WAV if needed (VAD already sends WAV)
+                    if audio_format == "wav":
+                        await websocket.send_json({"type": "processing", "message": "Transcribing..."})
+                        wav_data = raw_audio
+                    else:
+                        await websocket.send_json({"type": "processing", "message": "Converting audio..."})
+                        wav_data = await _convert_webm_to_wav(raw_audio)
+                        
+                        if wav_data is None:
+                            await websocket.send_json({"type": "error", "message": "Audio conversion failed"})
+                            audio_buffer = io.BytesIO()
+                            audio_format = "webm"
+                            continue
+                        
+                        await websocket.send_json({"type": "processing", "message": "Transcribing..."})
                     
-                    # Run the full pipeline
-                    # We use default instructions or those from session config
+                    # Run the full pipeline with WAV audio
                     result = await conversation_service.run_dialogue(
-                        audio_bytes=audio_data,
+                        audio_bytes=wav_data,
                         filename="live_input.wav",
                         content_type="audio/wav",
-                        instructions="You are a helpful voice assistant. Keep responses concise and conversational.",
+                        instructions=instructions,
                         stream_audio=True
                     )
                     
@@ -260,12 +361,19 @@ async def conversation_ws(websocket: WebSocket) -> None:
                                     "data": encoded
                                 })
                     
+                    # Reset buffer for next turn
+                    audio_buffer = io.BytesIO()
+                    audio_format = "webm"  # Reset to default
+                    await websocket.send_json({"type": "ready", "message": "Ready for next turn"})
+                    
                 except Exception as e:
                     logger.exception("Error processing audio turn")
                     await websocket.send_json({
                         "type": "error",
                         "message": str(e)
                     })
+                    audio_buffer = io.BytesIO()  # Reset on error
+                    audio_format = "webm"
                     
             elif msg_type == "text":
                 # Handle text input (bypass STT)

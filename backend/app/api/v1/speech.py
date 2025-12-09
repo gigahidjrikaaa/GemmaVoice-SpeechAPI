@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import logging
 import io
+import time
 from typing import Any, AsyncIterator, Dict
 
 from fastapi import (
@@ -40,9 +42,11 @@ from app.security import (
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(
-    dependencies=[Depends(require_api_key), Depends(enforce_rate_limit)],
-)
+# Router without global dependencies - WebSocket routes handle auth separately
+router = APIRouter()
+
+# Common dependencies for HTTP routes
+http_dependencies = [Depends(require_api_key), Depends(enforce_rate_limit)]
 
 
 def _parse_json_field(raw_value: str | None, field_name: str) -> Dict[str, Any]:
@@ -104,6 +108,7 @@ def _get_conversation_service(request: Request) -> ConversationService:
     response_model=SpeechTranscriptionResponse,
     summary="Transcribe uploaded audio with Whisper",
     tags=["STT (Whisper)"],
+    dependencies=http_dependencies,
 )
 async def speech_to_text(
     file: UploadFile = File(..., description="Audio file to transcribe."),
@@ -154,6 +159,7 @@ async def speech_to_text(
     summary="Encode audio file for voice cloning",
     description="Upload an audio file to get its base64 representation for use in the 'references' field of text-to-speech requests.",
     tags=["TTS (OpenAudio)"],
+    dependencies=http_dependencies,
 )
 async def encode_reference(
     file: UploadFile = File(..., description="Audio file to encode (wav, mp3, etc)."),
@@ -172,6 +178,7 @@ async def encode_reference(
     response_model=SpeechSynthesisResponse,
     summary="Synthesize speech with OpenAudio",
     tags=["TTS (OpenAudio)"],
+    dependencies=http_dependencies,
     responses={
         200: {
             "description": "Audio response (Base64 JSON or Binary Audio).",
@@ -210,17 +217,31 @@ async def text_to_speech(
             volume=payload.volume,
         )
 
-        async def iterator() -> AsyncIterator[bytes]:
+        async def sse_iterator() -> AsyncIterator[str]:
+            """Stream audio as SSE events with base64 encoded chunks."""
+            import base64
             async for chunk in stream_result.iterator_factory():
-                yield chunk
+                # Encode chunk as base64 for SSE transport
+                chunk_b64 = base64.b64encode(chunk).decode('ascii')
+                # Format as SSE event
+                yield f"event: audio_chunk\ndata: {json.dumps(chunk_b64)}\n\n"
+            
+            # Send completion event
+            yield f"event: done\ndata: {json.dumps({'status': 'complete'})}\n\n"
 
         headers = {
             "x-audio-format": stream_result.response_format,
             "x-sample-rate": str(stream_result.sample_rate),
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
         }
         if stream_result.reference_id:
             headers["x-reference-id"] = stream_result.reference_id
-        return StreamingResponse(iterator(), media_type=stream_result.media_type, headers=headers)
+        return StreamingResponse(
+            sse_iterator(), 
+            media_type="text/event-stream", 
+            headers=headers
+        )
 
     synthesis = await openaudio_service.synthesize(
         text=payload.text,
@@ -265,6 +286,283 @@ async def text_to_speech(
     )
 
 
+class StreamingTranscriber:
+    """Handles real-time streaming transcription with interim results.
+    
+    Note: WebM/Opus from browser MediaRecorder requires accumulating all chunks
+    because each chunk depends on the initialization segment (header) from the 
+    first chunk. We accumulate the full WebM stream and convert to WAV for Whisper.
+    """
+    
+    def __init__(
+        self,
+        whisper_service: WhisperService,
+        websocket: WebSocket,
+        chunk_duration_ms: int = 3000,  # Process every 3 seconds for better context
+        overlap_ms: int = 500,  # Overlap for better word boundaries
+    ):
+        self.whisper_service = whisper_service
+        self.websocket = websocket
+        self.chunk_duration_ms = chunk_duration_ms
+        self.overlap_ms = overlap_ms
+        
+        # Full WebM stream buffer - keeps all data including header
+        self.webm_buffer = io.BytesIO()
+        self.last_process_time = time.time()
+        self.is_processing = False
+        self.final_transcript = ""
+        self.interim_transcript = ""
+        self.last_transcribed_position = 0  # Track what we've already transcribed
+        
+        # Configuration from client
+        self.language: str | None = None
+        self.response_format: str = "verbose_json"
+        self.temperature: float = 0.0
+        
+    async def add_audio_chunk(self, chunk: bytes) -> None:
+        """Add audio chunk to the WebM stream buffer."""
+        self.webm_buffer.write(chunk)
+        
+        current_time = time.time()
+        elapsed_ms = (current_time - self.last_process_time) * 1000
+        
+        # Process if we have enough audio and not already processing
+        if elapsed_ms >= self.chunk_duration_ms and not self.is_processing:
+            await self._process_buffer(is_final=False)
+            self.last_process_time = current_time
+    
+    async def finalize(self) -> None:
+        """Process any remaining audio as final transcript."""
+        if self.webm_buffer.tell() > 0:
+            await self._process_buffer(is_final=True)
+    
+    async def _convert_webm_to_wav(self, webm_data: bytes) -> bytes | None:
+        """Convert WebM audio to WAV format using FFmpeg.
+        
+        Returns WAV bytes or None if conversion fails.
+        """
+        import subprocess
+        import tempfile
+        import os
+        
+        try:
+            # Write WebM to temp file
+            with tempfile.NamedTemporaryFile(suffix=".webm", delete=False) as webm_file:
+                webm_file.write(webm_data)
+                webm_path = webm_file.name
+            
+            # Create output WAV path
+            wav_path = webm_path.replace(".webm", ".wav")
+            
+            try:
+                # Use FFmpeg to convert WebM to WAV (16kHz mono for Whisper)
+                result = subprocess.run(
+                    [
+                        "ffmpeg", "-y",  # Overwrite output
+                        "-i", webm_path,  # Input file
+                        "-vn",  # No video
+                        "-acodec", "pcm_s16le",  # PCM 16-bit
+                        "-ar", "16000",  # 16kHz sample rate (optimal for Whisper)
+                        "-ac", "1",  # Mono
+                        wav_path
+                    ],
+                    capture_output=True,
+                    timeout=30
+                )
+                
+                if result.returncode != 0:
+                    logger.error("FFmpeg conversion failed: %s", result.stderr.decode())
+                    return None
+                
+                # Read the WAV file
+                with open(wav_path, "rb") as wav_file:
+                    return wav_file.read()
+                    
+            finally:
+                # Cleanup temp files
+                for path in [webm_path, wav_path]:
+                    try:
+                        os.unlink(path)
+                    except OSError:
+                        pass
+                        
+        except Exception as e:
+            logger.error("Error converting WebM to WAV: %s", e)
+            return None
+    
+    async def _process_buffer(self, is_final: bool = False) -> None:
+        """Process accumulated WebM audio buffer by converting to WAV and transcribing."""
+        if self.is_processing:
+            return
+            
+        self.is_processing = True
+        try:
+            # Get the full WebM stream (including header)
+            webm_data = self.webm_buffer.getvalue()
+            
+            if len(webm_data) < 1000:  # Skip if too little data
+                if is_final:
+                    await self.websocket.send_json({
+                        "event": "final",
+                        "data": {
+                            "text": self.final_transcript,
+                            "is_final": True
+                        }
+                    })
+                return
+            
+            # Convert WebM to WAV for Whisper
+            wav_data = await self._convert_webm_to_wav(webm_data)
+            
+            if wav_data is None:
+                await self.websocket.send_json({
+                    "event": "warning",
+                    "detail": "Audio conversion failed, skipping chunk"
+                })
+                return
+            
+            # Transcribe the WAV audio
+            try:
+                transcription = await self.whisper_service.transcribe(
+                    wav_data,
+                    filename="stream.wav",
+                    content_type="audio/wav",
+                    language=self.language,
+                    response_format=self.response_format,
+                    temperature=self.temperature,
+                )
+                
+                transcript_text = transcription.text.strip()
+                
+                if transcript_text:
+                    if is_final:
+                        # Use the full transcription as final result
+                        self.final_transcript = transcript_text
+                        
+                        await self.websocket.send_json({
+                            "event": "final",
+                            "data": {
+                                "text": self.final_transcript,
+                                "language": transcription.language,
+                                "segments": [
+                                    {
+                                        "id": seg.id,
+                                        "start": seg.start,
+                                        "end": seg.end,
+                                        "text": seg.text
+                                    }
+                                    for seg in transcription.segments
+                                ],
+                                "is_final": True
+                            }
+                        })
+                    else:
+                        # Send interim result (transcription of audio so far)
+                        self.interim_transcript = transcript_text
+                        await self.websocket.send_json({
+                            "event": "interim",
+                            "data": {
+                                "text": transcript_text,
+                                "language": transcription.language,
+                                "is_final": False
+                            }
+                        })
+                        
+            except Exception as e:
+                logger.error("Transcription error: %s", e)
+                await self.websocket.send_json({
+                    "event": "error",
+                    "detail": f"Transcription failed: {str(e)}"
+                })
+                
+        finally:
+            self.is_processing = False
+
+
+@router.websocket("/speech-to-text/stream")
+async def speech_to_text_stream(websocket: WebSocket) -> None:
+    """Real-time streaming speech-to-text with interim results.
+    
+    This endpoint provides true streaming transcription:
+    - Send binary audio chunks continuously
+    - Receive interim (partial) transcription results in real-time
+    - Receive final transcription when audio stops
+    
+    Protocol:
+    1. Connect to WebSocket
+    2. Send JSON config: {"language": "en", "interim_results": true}
+    3. Send binary audio chunks (WebM/Opus format recommended)
+    4. Receive interim results: {"event": "interim", "data": {"text": "...", "is_final": false}}
+    5. Send JSON {"event": "stop"} to finalize
+    6. Receive final result: {"event": "final", "data": {"text": "...", "is_final": true}}
+    """
+    if not await enforce_websocket_api_key(websocket):
+        return
+    if not await enforce_websocket_rate_limit(websocket):
+        return
+    await websocket.accept()
+    
+    whisper_service: WhisperService | None = getattr(websocket.app.state, "whisper_service", None)
+    if whisper_service is None or not whisper_service.is_ready:
+        await websocket.close(code=1013, reason="Whisper service is unavailable")
+        return
+    
+    # Create streaming transcriber
+    transcriber = StreamingTranscriber(whisper_service, websocket)
+    
+    # Send ready message
+    await websocket.send_json({"event": "ready", "message": "Send audio chunks to begin transcription"})
+    
+    try:
+        while True:
+            message = await websocket.receive()
+            
+            if "bytes" in message:
+                # Binary audio chunk
+                chunk = message["bytes"]
+                if chunk:
+                    await transcriber.add_audio_chunk(chunk)
+                    
+            elif "text" in message:
+                try:
+                    payload = json.loads(message["text"])
+                except json.JSONDecodeError:
+                    await websocket.send_json({"event": "error", "detail": "Invalid JSON"})
+                    continue
+                
+                event_type = payload.get("event")
+                
+                if event_type == "config":
+                    # Update configuration
+                    transcriber.language = payload.get("language")
+                    transcriber.response_format = payload.get("response_format", "verbose_json")
+                    transcriber.temperature = payload.get("temperature", 0.0)
+                    await websocket.send_json({"event": "configured", "config": {
+                        "language": transcriber.language,
+                        "response_format": transcriber.response_format,
+                        "temperature": transcriber.temperature
+                    }})
+                    
+                elif event_type == "stop":
+                    # Finalize transcription
+                    await transcriber.finalize()
+                    break
+                    
+                elif event_type == "clear":
+                    # Reset transcriber state
+                    transcriber.webm_buffer = io.BytesIO()
+                    transcriber.final_transcript = ""
+                    transcriber.interim_transcript = ""
+                    await websocket.send_json({"event": "cleared"})
+                    
+    except WebSocketDisconnect:
+        logger.info("Client disconnected from streaming speech-to-text")
+    except Exception as exc:
+        logger.exception("Error in streaming speech-to-text handler")
+        try:
+            await websocket.close(code=1011, reason="Internal server error")
+        except Exception:
+            pass
 
 
 

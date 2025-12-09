@@ -36,7 +36,7 @@ async def lifespan(app: FastAPI):
     app.state.llm_service = llm_service
 
     whisper_service = WhisperService(settings=settings)
-    # await whisper_service.startup()  # Removed for lazy loading
+    await whisper_service.startup()  # Initialize remote client (fast, no model loading)
     app.state.whisper_service = whisper_service
 
     openaudio_service = OpenAudioService(settings=settings)

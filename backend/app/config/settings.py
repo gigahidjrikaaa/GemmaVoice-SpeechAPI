@@ -225,6 +225,33 @@ class Settings(BaseSettings):
         description="Compute type for Faster Whisper inference (e.g. int8, float16, float32).",
     )
 
+    # LiveKit configuration
+    livekit_url: Optional[str] = Field(
+        default=None,
+        alias="LIVEKIT_URL",
+        description="WebSocket URL for the LiveKit server (e.g. ws://localhost:7880).",
+    )
+    livekit_api_key: Optional[str] = Field(
+        default=None,
+        alias="LIVEKIT_API_KEY",
+        description="API key for LiveKit token generation.",
+    )
+    livekit_api_secret: Optional[str] = Field(
+        default=None,
+        alias="LIVEKIT_API_SECRET",
+        description="API secret for LiveKit token generation.",
+    )
+    livekit_room_name: str = Field(
+        default="gemma-voice-room",
+        alias="LIVEKIT_ROOM_NAME",
+        description="Default room name for voice agent sessions.",
+    )
+    livekit_token_ttl: PositiveInt = Field(
+        default=86400,
+        alias="LIVEKIT_TOKEN_TTL",
+        description="Time-to-live in seconds for generated LiveKit tokens (default 24 hours).",
+    )
+
     @field_validator("api_keys", mode="before")
     @classmethod
     def _split_api_keys(cls, value: Optional[str | list[str]]) -> list[str]:
@@ -242,6 +269,9 @@ class Settings(BaseSettings):
         "openai_api_base",
         "openaudio_api_key",
         "openaudio_default_reference_id",
+        "livekit_url",
+        "livekit_api_key",
+        "livekit_api_secret",
         mode="before",
     )
     @classmethod

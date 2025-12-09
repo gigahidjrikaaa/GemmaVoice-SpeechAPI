@@ -63,7 +63,7 @@ def event_loop():
 def test_settings() -> Settings:
     """Create test-specific settings with security disabled."""
     return Settings(
-        _env_file=None,  # Skip .env file to avoid parsing issues
+        _env_file=None,  # type: ignore[call-arg]  # Skip .env file to avoid parsing issues
         api_key_enabled=False,
         rate_limit_enabled=False,
         log_level="DEBUG",
@@ -78,7 +78,7 @@ def test_settings() -> Settings:
 def secure_settings() -> Settings:
     """Create settings with security features enabled for auth tests."""
     return Settings(
-        _env_file=None,  # Skip .env file to avoid parsing issues
+        _env_file=None,  # type: ignore[call-arg]  # Skip .env file to avoid parsing issues
         api_key_enabled=True,
         api_keys=["test-api-key", "another-key"],
         rate_limit_enabled=True,
@@ -146,7 +146,7 @@ class MockLLMService:
         self._response_text = response_text
         self._model = MockLLMModel(response_text)
         self._is_ready = True
-        self._settings = Settings(_env_file=None)
+        self._settings = Settings(_env_file=None)  # type: ignore[call-arg]
 
     @property
     def model(self) -> MockLLMModel:

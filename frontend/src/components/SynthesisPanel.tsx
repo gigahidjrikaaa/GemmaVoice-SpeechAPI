@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState, useRef } from "react";
 import { useClientConfig } from "../context/ConfigContext";
 import { useCode } from "../context/CodeContext";
 import { apiFetch, apiFetchStream } from "../lib/apiClient";
@@ -7,6 +7,8 @@ import { useVoiceCloning } from "../hooks/useVoiceCloning";
 import { VoiceCloningInput } from "./VoiceCloningInput";
 import { useToast } from "./Toast";
 import { InstructionsPanel } from "./InstructionsPanel";
+import { FAQSection, type FAQItem } from "./FAQSection";
+import { ExamplePrompts, type ExamplePrompt } from "./ExamplePrompts";
 import { errorLogger } from "../lib/errorLogger";
 import { Play, Download, Volume2, Mic, Music, Radio } from "lucide-react";
 
@@ -44,6 +46,103 @@ const PARAM_HELP = {
   normalize: "Automatically adjust audio volume to prevent distortion and ensure consistent loudness."
 };
 
+// Example texts for TTS
+const EXAMPLE_TEXTS: ExamplePrompt[] = [
+  {
+    title: "English Greeting",
+    description: "A friendly English introduction",
+    prompt: "Hello! Welcome to the GemmaVoice Speech API. I'm excited to help you convert text to natural sounding speech today.",
+    category: "English"
+  },
+  {
+    title: "Indonesian Greeting",
+    description: "A formal Indonesian welcome message",
+    prompt: "Selamat datang di GemmaVoice Speech API. Saya sangat senang bisa membantu Anda mengubah teks menjadi suara yang alami.",
+    category: "Indonesian"
+  },
+  {
+    title: "Indonesian Story",
+    description: "A short Indonesian narrative",
+    prompt: "Pada suatu hari di sebuah desa kecil, tinggal seorang anak perempuan bernama Siti. Dia sangat rajin dan suka membantu orang tuanya di ladang.",
+    category: "Indonesian"
+  },
+  {
+    title: "Technical Explanation",
+    description: "Professional technical narration",
+    prompt: "The OpenAudio S1-Mini model uses advanced neural network architecture to synthesize natural human speech from text input with high fidelity.",
+    category: "English"
+  },
+  {
+    title: "Podcast Intro",
+    description: "Engaging podcast-style opening",
+    prompt: "Hey everyone! Welcome back to another episode. Today we're diving deep into the world of artificial intelligence and how it's changing the way we interact with technology.",
+    category: "English"
+  }
+];
+
+// FAQ items for text-to-speech
+const FAQ_ITEMS: FAQItem[] = [
+  {
+    question: "What's the difference between Render Audio and Stream Audio?",
+    answer: "Render Audio generates the complete audio file before playback, ensuring consistent quality. Stream Audio plays audio progressively as it's generated, offering faster time-to-first-sound. Use Render for production/downloads; use Stream for interactive applications or previewing long texts.",
+    category: "Basics"
+  },
+  {
+    question: "Does this support Indonesian speech?",
+    answer: "Yes! OpenAudio-S1-Mini supports Indonesian text-to-speech. Simply enter Indonesian text and it will be synthesized. For best results with Indonesian accents, consider using voice cloning with samples from an Indonesian speaker.",
+    category: "Language"
+  },
+  {
+    question: "How does voice cloning work?",
+    answer: (
+      <div className="space-y-2">
+        <p>Voice cloning lets you synthesize speech in a custom voice style:</p>
+        <ol className="list-decimal ml-4 space-y-1">
+          <li>Upload 3-5 audio samples of the target voice</li>
+          <li>Each sample should be 10-30 seconds of clear speech</li>
+          <li>Ensure consistent audio quality across samples</li>
+          <li>Enable voice cloning and enter your text</li>
+          <li>The system will generate speech matching that voice</li>
+        </ol>
+        <p className="text-amber-300/80 mt-2">Note: Best results with clean, noise-free recordings of a single speaker.</p>
+      </div>
+    ),
+    category: "Voice Cloning"
+  },
+  {
+    question: "Which audio format should I use?",
+    answer: (
+      <ul className="space-y-1 mt-2">
+        <li><strong>WAV:</strong> Best quality, uncompressed. Use for editing or archival.</li>
+        <li><strong>MP3:</strong> Good balance of quality and size. Recommended for most uses.</li>
+        <li><strong>OGG:</strong> Open format, good compression. Works well on web.</li>
+        <li><strong>FLAC:</strong> Lossless compression. Quality of WAV, smaller size.</li>
+      </ul>
+    ),
+    category: "Parameters"
+  },
+  {
+    question: "What sample rate should I choose?",
+    answer: "22050 Hz is sufficient for speech and produces smaller files. 44100 Hz (CD quality) offers better quality for music or when editing. 48000 Hz is professional video standard. Higher rates = larger files and longer generation time.",
+    category: "Parameters"
+  },
+  {
+    question: "Why does my voice cloning sound different from the samples?",
+    answer: "Voice cloning captures speaking style rather than exact voice. For better results: use 3-5 samples (not just 1-2), ensure samples are clean without background noise, use samples of the same speaker and consistent speaking style, and make sure samples are 10-30 seconds each.",
+    category: "Voice Cloning"
+  },
+  {
+    question: "Why am I getting OpenAudio service unavailable errors?",
+    answer: "The OpenAudio API runs as a separate container on port 21251. Check: 1) docker ps to see if openaudio_api is running, 2) docker logs openaudio_api for errors, 3) Ensure model checkpoints are in backend/openaudio-checkpoints/. Model loading takes 1-2 minutes on first start.",
+    category: "Troubleshooting"
+  },
+  {
+    question: "What does the 'Normalize' option do?",
+    answer: "Normalize adjusts the audio volume to a consistent level, preventing distortion from audio that's too loud and boosting audio that's too quiet. Recommended to keep enabled unless you need precise volume control.",
+    category: "Parameters"
+  }
+];
+
 export function SynthesisPanel() {
   const { config } = useClientConfig();
   const { setSnippet } = useCode();
@@ -53,9 +152,26 @@ export function SynthesisPanel() {
   const [streamLog, setStreamLog] = useState<StreamEvent[]>([]);
   const [objectUrl, setObjectUrl] = useState<string | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [isStreamPlaying, setIsStreamPlaying] = useState(false);
+
+  // Audio streaming refs for real-time playback
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const nextPlayTimeRef = useRef<number>(0);
+  const allChunksRef = useRef<ArrayBuffer[]>([]);
+  const pendingChunksRef = useRef<ArrayBuffer[]>([]);
+  const isProcessingRef = useRef(false);
 
   // Use shared voice cloning hook
   const voiceCloning = useVoiceCloning();
+
+  // Handle example text selection
+  const handleExampleSelect = (example: ExamplePrompt) => {
+    setRequest(prev => ({
+      ...prev,
+      text: example.prompt
+    }));
+    push({ title: `Example loaded: ${example.title}` });
+  };
 
   useEffect(() => {
     return () => {
@@ -136,6 +252,13 @@ export function SynthesisPanel() {
     }
     setAudioUrl(null);
     setIsGenerating(true);
+    setIsStreamPlaying(true);
+    
+    // Reset audio state for streaming
+    allChunksRef.current = [];
+    pendingChunksRef.current = [];
+    isProcessingRef.current = false;
+    nextPlayTimeRef.current = 0;
 
     const curl = `curl -N -X POST ${config.baseUrl}/v1/text-to-speech \\
   -H "Content-Type: application/json" \\
@@ -151,7 +274,68 @@ export function SynthesisPanel() {
       title: "Streaming TTS Request"
     });
 
-    const chunks: ArrayBuffer[] = [];
+    // Initialize AudioContext for real-time playback
+    if (!audioContextRef.current) {
+      audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
+    }
+    const audioContext = audioContextRef.current;
+    
+    // Resume audio context if suspended (browser autoplay policy)
+    if (audioContext.state === 'suspended') {
+      await audioContext.resume();
+    }
+
+    // Function to schedule and play audio chunks with seamless gapless playback
+    const scheduleChunk = async (arrayBuffer: ArrayBuffer) => {
+      try {
+        // Try to decode as complete audio first (WAV/MP3 chunks)
+        let audioBuffer: AudioBuffer;
+        try {
+          audioBuffer = await audioContext.decodeAudioData(arrayBuffer.slice(0));
+        } catch {
+          // If decoding fails, it might be raw PCM - try to interpret as raw audio
+          // Assuming 16-bit PCM, mono, at the configured sample rate
+          const sampleRate = request.sample_rate || 44100;
+          const int16Array = new Int16Array(arrayBuffer);
+          audioBuffer = audioContext.createBuffer(1, int16Array.length, sampleRate);
+          const channelData = audioBuffer.getChannelData(0);
+          for (let i = 0; i < int16Array.length; i++) {
+            channelData[i] = int16Array[i] / 32768; // Convert to float [-1, 1]
+          }
+        }
+
+        const source = audioContext.createBufferSource();
+        source.buffer = audioBuffer;
+        source.connect(audioContext.destination);
+
+        // Schedule playback at the next available time for gapless audio
+        const currentTime = audioContext.currentTime;
+        const startTime = Math.max(currentTime, nextPlayTimeRef.current);
+        source.start(startTime);
+        
+        // Update next play time to end of this buffer
+        nextPlayTimeRef.current = startTime + audioBuffer.duration;
+        
+        console.log(`Scheduled chunk: ${audioBuffer.duration.toFixed(3)}s at ${startTime.toFixed(3)}s`);
+      } catch (error) {
+        console.error("Error scheduling audio chunk:", error);
+      }
+    };
+
+    // Process pending chunks
+    const processPendingChunks = async () => {
+      if (isProcessingRef.current || pendingChunksRef.current.length === 0) return;
+      
+      isProcessingRef.current = true;
+      while (pendingChunksRef.current.length > 0) {
+        const chunk = pendingChunksRef.current.shift();
+        if (chunk) {
+          await scheduleChunk(chunk);
+        }
+      }
+      isProcessingRef.current = false;
+    };
+
     try {
       const references = await voiceCloning.getReferences();
       await apiFetchStream(
@@ -170,13 +354,27 @@ export function SynthesisPanel() {
         (event) => {
           setStreamLog((prev) => [...prev, { event: String(event.event ?? "data"), data: event.data }]);
           if (event.event === "audio_chunk" && typeof event.data === "string") {
-            const chunk = Uint8Array.from(atob(event.data), (c) => c.charCodeAt(0)).buffer;
-            chunks.push(chunk);
+            // Decode base64 to ArrayBuffer
+            const binaryString = atob(event.data);
+            const bytes = new Uint8Array(binaryString.length);
+            for (let i = 0; i < binaryString.length; i++) {
+              bytes[i] = binaryString.charCodeAt(i);
+            }
+            const chunk = bytes.buffer;
+            
+            // Store for final download
+            allChunksRef.current.push(chunk);
+            
+            // Queue for real-time playback
+            pendingChunksRef.current.push(chunk);
+            processPendingChunks();
           }
         }
       );
-      if (chunks.length) {
-        const blob = new Blob(chunks, { type: `audio/${request.format ?? "wav"}` });
+      
+      // Create final audio URL for download after streaming completes
+      if (allChunksRef.current.length) {
+        const blob = new Blob(allChunksRef.current, { type: `audio/${request.format ?? "wav"}` });
         const url = URL.createObjectURL(blob);
         if (objectUrl) {
           URL.revokeObjectURL(objectUrl);
@@ -191,6 +389,7 @@ export function SynthesisPanel() {
       push({ title: "Streaming failed", description: userMessage, variant: "error" });
     } finally {
       setIsGenerating(false);
+      setIsStreamPlaying(false);
     }
   };
 
@@ -452,6 +651,22 @@ export function SynthesisPanel() {
           )}
         </div>
       </div>
+
+      {/* Example Texts Section */}
+      <ExamplePrompts
+        title="🎤 Try These Example Texts"
+        description="Click any example to load it into the text field. Includes English and Indonesian samples!"
+        examples={EXAMPLE_TEXTS}
+        onSelect={handleExampleSelect}
+        buttonLabel="Use this"
+      />
+
+      {/* FAQ Section */}
+      <FAQSection
+        title="❓ Text-to-Speech FAQ"
+        description="Common questions about speech synthesis with OpenAudio"
+        items={FAQ_ITEMS}
+      />
     </div>
   );
 }

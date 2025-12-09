@@ -16,3 +16,9 @@ soundfile
 prometheus-client>=0.21.0
 pytest
 pytest-asyncio
+ormsgpack
+
+# LiveKit Agents SDK
+livekit>=0.17.0
+livekit-agents>=0.12.0
+livekit-plugins-silero>=0.7.0

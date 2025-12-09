@@ -26,11 +26,12 @@ def get_llm_service(request: Request) -> LLMService:
         HTTPException: If service is not available
     """
     service: LLMService | None = getattr(request.app.state, "llm_service", None)
-    if service is None or not service.is_ready:
+    if service is None:
         raise HTTPException(
             status_code=503,
-            detail="LLM model service is not available or not ready",
+            detail="LLM service is not available",
         )
+    # Note: We don't check is_ready here to allow lazy loading in generate()
     return service
 
 

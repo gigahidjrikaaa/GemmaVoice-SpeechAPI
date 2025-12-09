@@ -10,15 +10,17 @@ import { GenerationPanel } from "./components/GenerationPanel";
 import { SynthesisPanel } from "./components/SynthesisPanel";
 import { TranscriptionPanel } from "./components/TranscriptionPanel";
 import { VoiceChatPanel } from "./components/VoiceChatPanel";
+import { AboutPanel } from "./components/AboutPanel";
 import { ToastProvider } from "./components/Toast";
 import { CodeViewer } from "./components/CodeViewer";
-import { Code, Layout } from "lucide-react";
+import { Code, Layout, Info } from "lucide-react";
 
 const tabs = [
   { id: "generate", label: "Text Generation", component: GenerationPanel },
   { id: "stt", label: "Speech to Text", component: TranscriptionPanel },
   { id: "tts", label: "Text to Speech", component: SynthesisPanel },
-  { id: "voice-chat", label: "🎙️ Voice Chat", component: VoiceChatPanel }
+  { id: "voice-chat", label: "🎙️ Voice Chat", component: VoiceChatPanel },
+  { id: "about", label: "ℹ️ About", component: AboutPanel }
 ];
 
 function AppShell() {
@@ -32,7 +34,7 @@ function AppShell() {
         <header className="flex items-center justify-between border-b border-slate-800 bg-slate-950/80 px-6 py-4 backdrop-blur-md sticky top-0 z-50">
           <div className="flex flex-col gap-1">
             <h1 className="text-xl font-bold bg-gradient-to-r from-emerald-400 to-cyan-400 bg-clip-text text-transparent">
-              AICare Speech Playground
+              Gemma Voice
             </h1>
             <p className="text-xs text-slate-400">
               Gemma 3 LLM • Whisper STT • OpenAudio TTS

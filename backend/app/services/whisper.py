@@ -150,17 +150,39 @@ class WhisperService:
             raise RuntimeError("Remote Whisper transcription failed") from exc
 
         payload = response if isinstance(response, dict) else response.model_dump()
+        logger.debug("Whisper response payload: %s", payload)
         record_external_call("whisper_remote", time.perf_counter() - start, success=True)
+        
+        # Extract text - some response formats return text directly, others via segments
+        raw_text = payload.get("text", "")
+        
+        # Build segments if available
         segments = [
             WhisperTranscriptionSegment(
-                id=segment.get("id"),
-                start=segment.get("start"),
-                end=segment.get("end"),
+                id=segment.get("id", i),
+                start=segment.get("start", 0.0),
+                end=segment.get("end", 0.0),
                 text=segment.get("text", ""),
             )
-            for segment in payload.get("segments", [])
+            for i, segment in enumerate(payload.get("segments", []))
         ]
-        return WhisperTranscription.from_segments(segments, payload.get("language"))
+        
+        # If no segments but we have text, create a single segment
+        if not segments and raw_text:
+            segments = [
+                WhisperTranscriptionSegment(
+                    id=0,
+                    start=0.0,
+                    end=payload.get("duration", 0.0),
+                    text=raw_text,
+                )
+            ]
+        
+        # Prefer raw text if available, otherwise construct from segments
+        text = raw_text if raw_text else "".join(seg.text for seg in segments)
+        language = payload.get("language")
+        
+        return WhisperTranscription(text=text, language=language, segments=segments)
 
     async def _load_faster_whisper_model(self) -> None:
         """Load Faster Whisper locally in a background thread."""

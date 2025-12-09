@@ -6,6 +6,8 @@ import { useCode } from "../context/CodeContext";
 import { apiFetch, apiFetchStream, type ApiError } from "../lib/apiClient";
 import { useToast } from "./Toast";
 import { InstructionsPanel } from "./InstructionsPanel";
+import { FAQSection, type FAQItem } from "./FAQSection";
+import { ExamplePrompts, type ExamplePrompt } from "./ExamplePrompts";
 import { errorLogger } from "../lib/errorLogger";
 import { Sparkles, Zap, Radio } from "lucide-react";
 
@@ -37,6 +39,96 @@ const PARAM_HELP = {
   max_tokens: "Maximum number of tokens to generate (1-4096). One token ≈ 4 characters for English text."
 };
 
+// Example prompts for quick testing
+const EXAMPLE_PROMPTS: ExamplePrompt[] = [
+  {
+    title: "Creative Writing",
+    description: "Generate a short story or creative content",
+    prompt: "Write a short story about a robot who discovers emotions for the first time. Keep it under 200 words.",
+    systemPrompt: "You are a creative writer with a talent for emotional storytelling.",
+    category: "Creative"
+  },
+  {
+    title: "Code Explanation",
+    description: "Explain programming concepts",
+    prompt: "Explain what async/await does in JavaScript with a simple example.",
+    systemPrompt: "You are a senior software engineer who explains concepts clearly.",
+    category: "Technical"
+  },
+  {
+    title: "Indonesian Translation",
+    description: "Translate text to Indonesian",
+    prompt: "Translate to Indonesian: 'The weather is beautiful today. Would you like to go for a walk in the park?'",
+    systemPrompt: "You are a professional translator fluent in English and Indonesian.",
+    category: "Language"
+  },
+  {
+    title: "Q&A Assistant",
+    description: "Answer general knowledge questions",
+    prompt: "What are the main differences between machine learning and deep learning?",
+    systemPrompt: "You are a knowledgeable AI assistant who gives accurate, concise answers.",
+    category: "Technical"
+  },
+  {
+    title: "Summarization",
+    description: "Summarize long content",
+    prompt: "Summarize the key benefits of renewable energy in 3 bullet points.",
+    category: "General"
+  }
+];
+
+// FAQ items for text generation
+const FAQ_ITEMS: FAQItem[] = [
+  {
+    question: "What is the difference between Generate and Stream?",
+    answer: "Generate waits for the complete response before displaying it. Stream shows tokens as they're generated in real-time, providing faster perceived response time and allowing you to see the model 'thinking'. Use Stream for longer responses or when you want immediate feedback.",
+    category: "Basics"
+  },
+  {
+    question: "How do I make responses more creative or more focused?",
+    answer: (
+      <div className="space-y-2">
+        <p><strong>For creative/varied output:</strong> Increase temperature (0.8-1.2), top_p (0.95), and top_k (50+)</p>
+        <p><strong>For focused/consistent output:</strong> Decrease temperature (0.1-0.4), top_p (0.7-0.85), and top_k (10-30)</p>
+        <p>Tip: Start with temperature adjustments first as it has the most noticeable effect.</p>
+      </div>
+    ),
+    category: "Parameters"
+  },
+  {
+    question: "What's the best system prompt to use?",
+    answer: "A good system prompt clearly defines the AI's role, tone, and constraints. Example: 'You are a helpful coding assistant. Provide concise answers with code examples when relevant. If you don't know something, say so.' Keep it specific to your use case.",
+    category: "Basics"
+  },
+  {
+    question: "Why is my response cut off or too short?",
+    answer: "Increase the max_tokens parameter. The model stops generating when it reaches this limit. For longer responses, try 512-1024 tokens. Note: longer responses take more time and compute resources.",
+    category: "Troubleshooting"
+  },
+  {
+    question: "Can I use this for Indonesian language?",
+    answer: "Yes! Gemma 3 supports Indonesian. You can write prompts in Indonesian or ask it to respond in Indonesian. For best results, include 'Respond in Indonesian' or 'Jawab dalam Bahasa Indonesia' in your prompt or system prompt.",
+    category: "Language"
+  },
+  {
+    question: "What does each parameter actually do?",
+    answer: (
+      <ul className="space-y-2 mt-2">
+        <li><strong>Temperature:</strong> Randomness. Low = predictable, High = creative.</li>
+        <li><strong>Top-P:</strong> Cumulative probability threshold for token selection.</li>
+        <li><strong>Top-K:</strong> Number of top tokens to consider at each step.</li>
+        <li><strong>Max Tokens:</strong> Maximum length of the generated response.</li>
+      </ul>
+    ),
+    category: "Parameters"
+  },
+  {
+    question: "Why am I getting 503 errors?",
+    answer: "503 errors typically mean the LLM service is still loading or unavailable. On first startup, the model takes 1-3 minutes to load. Check Docker logs with 'docker logs gemma_service' to see loading progress. The API will return 503 until the model is ready.",
+    category: "Troubleshooting"
+  }
+];
+
 export function GenerationPanel() {
   const { config } = useClientConfig();
   const { selectedModel } = useModelsContext();
@@ -45,6 +137,16 @@ export function GenerationPanel() {
   const [request, setRequest] = useState(defaultRequest);
   const [result, setResult] = useState<GenerationResponse | null>(null);
   const [streamLog, setStreamLog] = useState<StreamEvent[]>([]);
+
+  // Handle example prompt selection
+  const handleExampleSelect = (example: ExamplePrompt) => {
+    setRequest(prev => ({
+      ...prev,
+      prompt: example.prompt,
+      system_prompt: example.systemPrompt || ""
+    }));
+    push({ title: `Example loaded: ${example.title}` });
+  };
 
   // Update code snippet when request changes
   useEffect(() => {
@@ -372,6 +474,22 @@ export function GenerationPanel() {
           )}
         </div>
       </div>
+
+      {/* Example Prompts Section */}
+      <ExamplePrompts
+        title="✨ Try These Examples"
+        description="Click any example to load it into the prompt field. Great for testing different use cases!"
+        examples={EXAMPLE_PROMPTS}
+        onSelect={handleExampleSelect}
+        buttonLabel="Use this"
+      />
+
+      {/* FAQ Section */}
+      <FAQSection
+        title="❓ Frequently Asked Questions"
+        description="Common questions about text generation with Gemma 3"
+        items={FAQ_ITEMS}
+      />
     </div>
   );
 }

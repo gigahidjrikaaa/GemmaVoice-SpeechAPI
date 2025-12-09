@@ -21,6 +21,8 @@ services:
       - ENABLE_FASTER_WHISPER=false
       - OPENAI_API_BASE=http://whisper_service:8000/v1
       - OPENAI_API_KEY=dummy-key
+      # Options: Systran/faster-whisper-small (~500MB, fast), Systran/faster-whisper-medium (~1.5GB), deepdml/faster-whisper-large-v3-turbo-ct2 (~1.5GB, best quality+speed)
+      - OPENAI_WHISPER_MODEL=${OPENAI_WHISPER_MODEL:-Systran/faster-whisper-small}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - REQUEST_ID_HEADER=${REQUEST_ID_HEADER:-X-Request-ID}
       - API_KEY_ENABLED=${API_KEY_ENABLED:-false}
@@ -37,12 +39,18 @@ services:
       - OPENAUDIO_DEFAULT_NORMALIZE=${OPENAUDIO_DEFAULT_NORMALIZE:-true}
       - OPENAUDIO_TIMEOUT_SECONDS=${OPENAUDIO_TIMEOUT_SECONDS:-120}
       - OPENAUDIO_MAX_RETRIES=${OPENAUDIO_MAX_RETRIES:-3}
+      # LiveKit configuration
+      - LIVEKIT_URL=${LIVEKIT_URL:-ws://livekit:7880}
+      - LIVEKIT_API_KEY=${LIVEKIT_API_KEY:-devkey}
+      - LIVEKIT_API_SECRET=${LIVEKIT_API_SECRET:-secret}
+      - LIVEKIT_ROOM_NAME=${LIVEKIT_ROOM_NAME:-gemma-voice-room}
     # Expose the port to the host machine for direct testing/access
     ports:
       - "21250:6666"
     depends_on:
       - openaudio_api
       - whisper_service
+      - livekit
     networks:
       # Connect this service to our shared network
       - shared_services_network
@@ -73,7 +81,7 @@ services:
     networks:
       - shared_services_network
     ports:
-      - "8000:8000"
+      - "21252:8000"
     healthcheck:
       test: [ "CMD", "curl", "-f", "http://localhost:8000/health" ]
       interval: 30s
@@ -110,38 +118,27 @@ services:
       retries: 3
       start_period: 120s
 
-  openaudio_webui:
-    image: fishaudio/fish-speech:server-cuda
-    container_name: openaudio_webui
+  livekit:
+    image: livekit/livekit-server:latest
+    container_name: livekit
     restart: unless-stopped
-    depends_on:
-      - openaudio_api
+    command: --config /etc/livekit.yaml
     volumes:
-      - ../backend/openaudio-checkpoints:/app/checkpoints:ro
-      - openaudio-references:/app/references
+      - ./livekit.yaml:/etc/livekit.yaml:ro
     environment:
-      - COMPILE=1
-      - GRADIO_SERVER_NAME=0.0.0.0
-      - GRADIO_SERVER_PORT=7860
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [ gpu ]
-    entrypoint: []
-    command: [ "/bin/bash", "-lc", "pip install --no-cache-dir --break-system-packages pyrootutils torch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1 loguru fastapi uvicorn kui tyro pydantic ormsgpack hydra-core==1.3.2 python-dotenv markdown-it-py --extra-index-url https://download.pytorch.org/whl/cu121 && python3 -m tools.run_webui --llama-checkpoint-path checkpoints/OpenAudio-S1-mini --decoder-checkpoint-path checkpoints/OpenAudio-S1-mini/codec.pth --decoder-config-name modded_dac_vq --compile" ]
+      - LIVEKIT_KEYS=${LIVEKIT_API_KEY:-devkey}: ${LIVEKIT_API_SECRET:-secret}
     networks:
       - shared_services_network
     ports:
-      - "27860:7860"
+      - "21254:7880"   # HTTP/WebSocket
+      - "21255:7881"   # RTC over TCP
+      - "21256:7882/udp"  # RTC over UDP
     healthcheck:
-      test: [ "CMD", "curl", "-f", "http://localhost:7860" ]
+      test: [ "CMD", "wget", "-q", "--spider", "http://localhost:7880" ]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 120s
+      start_period: 10s
 
   frontend:
     build:
@@ -157,7 +154,7 @@ services:
       gemma_service:
         condition: service_healthy
     ports:
-      - "5173:80"
+      - "21253:80"
     networks:
       - shared_services_network
     healthcheck:

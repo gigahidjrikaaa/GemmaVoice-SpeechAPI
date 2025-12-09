@@ -1,4 +1,5 @@
-import { ReactNode } from "react";
+import { ReactNode, useState } from "react";
+import { ChevronDown, ChevronUp, BookOpen, Lightbulb, Wrench, ListChecks } from "lucide-react";
 
 interface InstructionsPanelProps {
   title: string;
@@ -14,80 +15,169 @@ interface InstructionsPanelProps {
     problem: string;
     solution: string;
   }[];
+  /** If true, panel starts collapsed */
+  defaultCollapsed?: boolean;
 }
 
-export function InstructionsPanel({ title, description, steps, tips, troubleshooting }: InstructionsPanelProps) {
+export function InstructionsPanel({ 
+  title, 
+  description, 
+  steps, 
+  tips, 
+  troubleshooting,
+  defaultCollapsed = false 
+}: InstructionsPanelProps) {
+  const [isCollapsed, setIsCollapsed] = useState(defaultCollapsed);
+  const [activeSection, setActiveSection] = useState<"steps" | "tips" | "troubleshooting">("steps");
+
+  const hasTips = tips && tips.length > 0;
+  const hasTroubleshooting = troubleshooting && troubleshooting.length > 0;
+
   return (
-    <div className="rounded-lg border border-blue-200 bg-blue-50 p-4 mb-6 dark:border-blue-800 dark:bg-blue-950">
-      <div className="flex items-start gap-3">
-        <span className="text-2xl">ℹ️</span>
-        <div className="flex-1">
-          <h3 className="text-lg font-semibold text-blue-900 dark:text-blue-100 mb-2">
-            {title}
-          </h3>
-          <p className="text-sm text-blue-800 dark:text-blue-200 mb-4">
-            {description}
-          </p>
-
-          {/* Steps */}
-          <div className="space-y-3">
-            {steps.map(({ step, title: stepTitle, description: stepDesc, details }) => (
-              <div key={step} className="flex gap-3">
-                <div className="flex-shrink-0 w-6 h-6 rounded-full bg-blue-500 text-white flex items-center justify-center text-sm font-semibold">
-                  {step}
-                </div>
-                <div className="flex-1">
-                  <p className="font-medium text-blue-900 dark:text-blue-100">
-                    {stepTitle}
-                  </p>
-                  <p className="text-sm text-blue-700 dark:text-blue-300 mt-1">
-                    {stepDesc}
-                  </p>
-                  {details && (
-                    <div className="mt-2 text-sm text-blue-600 dark:text-blue-400">
-                      {details}
-                    </div>
-                  )}
-                </div>
-              </div>
-            ))}
+    <div className="rounded-xl border border-blue-500/20 bg-blue-500/5 overflow-hidden animate-in fade-in slide-in-from-bottom-4 duration-500">
+      {/* Header - Always Visible */}
+      <button
+        onClick={() => setIsCollapsed(!isCollapsed)}
+        className="w-full flex items-center justify-between p-4 hover:bg-blue-500/10 transition-colors"
+        aria-expanded={!isCollapsed}
+      >
+        <div className="flex items-center gap-3">
+          <div className="h-10 w-10 rounded-lg bg-blue-500/20 flex items-center justify-center">
+            <BookOpen className="h-5 w-5 text-blue-400" />
           </div>
+          <div className="text-left">
+            <h3 className="text-sm font-semibold text-blue-300">
+              {title}
+            </h3>
+            <p className="text-xs text-blue-400/70 mt-0.5 max-w-md truncate">
+              {description}
+            </p>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-blue-400/60 hidden sm:inline">
+            {isCollapsed ? "Show guide" : "Hide guide"}
+          </span>
+          {isCollapsed ? (
+            <ChevronDown className="h-5 w-5 text-blue-400" />
+          ) : (
+            <ChevronUp className="h-5 w-5 text-blue-400" />
+          )}
+        </div>
+      </button>
 
-          {/* Tips */}
-          {tips && tips.length > 0 && (
-            <div className="mt-4 pt-4 border-t border-blue-200 dark:border-blue-800">
-              <p className="font-medium text-blue-900 dark:text-blue-100 mb-2 flex items-center gap-2">
-                💡 <span>Tips</span>
-              </p>
-              <ul className="space-y-1 text-sm text-blue-700 dark:text-blue-300">
-                {tips.map((tip, idx) => (
-                  <li key={idx} className="flex gap-2">
-                    <span>•</span>
-                    <span>{tip}</span>
-                  </li>
-                ))}
-              </ul>
+      {/* Collapsible Content */}
+      <div
+        className={`transition-all duration-300 ease-in-out overflow-hidden ${
+          isCollapsed ? "max-h-0" : "max-h-[2000px]"
+        }`}
+      >
+        <div className="p-4 pt-0 space-y-4">
+          {/* Section Tabs */}
+          {(hasTips || hasTroubleshooting) && (
+            <div className="flex gap-1 p-1 bg-slate-900/50 rounded-lg border border-slate-800 w-fit">
+              <button
+                onClick={() => setActiveSection("steps")}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
+                  activeSection === "steps"
+                    ? "bg-blue-500 text-white shadow-lg shadow-blue-500/20"
+                    : "text-slate-400 hover:text-slate-200"
+                }`}
+              >
+                <ListChecks className="h-3.5 w-3.5" />
+                Steps
+              </button>
+              {hasTips && (
+                <button
+                  onClick={() => setActiveSection("tips")}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
+                    activeSection === "tips"
+                      ? "bg-amber-500 text-white shadow-lg shadow-amber-500/20"
+                      : "text-slate-400 hover:text-slate-200"
+                  }`}
+                >
+                  <Lightbulb className="h-3.5 w-3.5" />
+                  Tips
+                </button>
+              )}
+              {hasTroubleshooting && (
+                <button
+                  onClick={() => setActiveSection("troubleshooting")}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
+                    activeSection === "troubleshooting"
+                      ? "bg-red-500 text-white shadow-lg shadow-red-500/20"
+                      : "text-slate-400 hover:text-slate-200"
+                  }`}
+                >
+                  <Wrench className="h-3.5 w-3.5" />
+                  Troubleshooting
+                </button>
+              )}
             </div>
           )}
 
-          {/* Troubleshooting */}
-          {troubleshooting && troubleshooting.length > 0 && (
-            <div className="mt-4 pt-4 border-t border-blue-200 dark:border-blue-800">
-              <p className="font-medium text-blue-900 dark:text-blue-100 mb-2 flex items-center gap-2">
-                🔧 <span>Troubleshooting</span>
-              </p>
-              <div className="space-y-2">
-                {troubleshooting.map(({ problem, solution }, idx) => (
-                  <div key={idx} className="text-sm">
-                    <p className="font-medium text-blue-800 dark:text-blue-200">
-                      ❌ {problem}
-                    </p>
-                    <p className="text-blue-700 dark:text-blue-300 ml-4">
-                      ✅ {solution}
-                    </p>
+          {/* Steps Section */}
+          {activeSection === "steps" && (
+            <div className="space-y-3 animate-in fade-in duration-200">
+              {steps.map(({ step, title: stepTitle, description: stepDesc, details }) => (
+                <div 
+                  key={step} 
+                  className="flex gap-3 p-3 rounded-lg bg-slate-900/30 border border-slate-800/50 hover:border-blue-500/30 transition-colors"
+                >
+                  <div className="flex-shrink-0 w-7 h-7 rounded-full bg-gradient-to-br from-blue-500 to-blue-600 text-white flex items-center justify-center text-sm font-bold shadow-lg shadow-blue-500/20">
+                    {step}
                   </div>
-                ))}
-              </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="font-medium text-blue-200 text-sm">
+                      {stepTitle}
+                    </p>
+                    <p className="text-xs text-slate-400 mt-1 leading-relaxed">
+                      {stepDesc}
+                    </p>
+                    {details && (
+                      <div className="mt-2 text-xs text-blue-400/80 bg-blue-500/10 p-2 rounded border border-blue-500/20">
+                        {details}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Tips Section */}
+          {activeSection === "tips" && hasTips && (
+            <div className="space-y-2 animate-in fade-in duration-200">
+              {tips.map((tip, idx) => (
+                <div 
+                  key={idx} 
+                  className="flex gap-3 p-3 rounded-lg bg-amber-500/5 border border-amber-500/20 hover:bg-amber-500/10 transition-colors"
+                >
+                  <Lightbulb className="h-4 w-4 text-amber-400 shrink-0 mt-0.5" />
+                  <p className="text-xs text-amber-100/80 leading-relaxed">{tip}</p>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Troubleshooting Section */}
+          {activeSection === "troubleshooting" && hasTroubleshooting && (
+            <div className="space-y-3 animate-in fade-in duration-200">
+              {troubleshooting.map(({ problem, solution }, idx) => (
+                <div 
+                  key={idx} 
+                  className="rounded-lg bg-slate-900/30 border border-slate-800/50 overflow-hidden"
+                >
+                  <div className="flex gap-2 p-3 bg-red-500/5 border-b border-red-500/10">
+                    <span className="text-red-400 text-xs">❌</span>
+                    <p className="text-xs font-medium text-red-300">{problem}</p>
+                  </div>
+                  <div className="flex gap-2 p-3 bg-emerald-500/5">
+                    <span className="text-emerald-400 text-xs">✅</span>
+                    <p className="text-xs text-emerald-300 leading-relaxed">{solution}</p>
+                  </div>
+                </div>
+              ))}
             </div>
           )}
         </div>

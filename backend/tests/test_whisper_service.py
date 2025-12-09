@@ -19,6 +19,15 @@ from app.services.whisper import (
 )
 
 
+def create_test_settings(**kwargs: Any) -> Settings:
+    """Create Settings instance for tests, bypassing env file loading.
+    
+    pydantic-settings accepts _env_file as a constructor parameter to
+    control env file loading, but Pylance doesn't recognize it.
+    """
+    return Settings(_env_file=None, **kwargs)  # type: ignore[call-arg]
+
+
 # ============================================================================
 # Data Model Tests
 # ============================================================================
@@ -98,7 +107,7 @@ class TestWhisperServiceInit:
 
     def test_init_with_default_settings(self) -> None:
         """Service initializes with default settings."""
-        settings = Settings(_env_file=None)
+        settings = create_test_settings()
         service = WhisperService(settings=settings)
         
         assert service._settings == settings
@@ -107,14 +116,14 @@ class TestWhisperServiceInit:
 
     def test_init_for_faster_whisper(self) -> None:
         """Service configures for local Faster Whisper."""
-        settings = Settings(_env_file=None, enable_faster_whisper=True)
+        settings = create_test_settings( enable_faster_whisper=True)
         service = WhisperService(settings=settings)
         
         assert service._settings.enable_faster_whisper is True
 
     def test_init_for_remote_api(self) -> None:
         """Service configures for remote OpenAI API."""
-        settings = Settings(_env_file=None,
+        settings = create_test_settings(
             enable_faster_whisper=False,
             openai_api_key="test-key",
         )
@@ -134,7 +143,7 @@ class TestWhisperServiceStartup:
     @pytest.mark.asyncio
     async def test_startup_with_faster_whisper(self) -> None:
         """startup() loads local model when Faster Whisper is enabled."""
-        settings = Settings(_env_file=None,
+        settings = create_test_settings(
             enable_faster_whisper=True,
             faster_whisper_model_size="base",
             faster_whisper_device="cpu",
@@ -152,7 +161,7 @@ class TestWhisperServiceStartup:
     @pytest.mark.asyncio
     async def test_startup_with_remote_api(self) -> None:
         """startup() initializes OpenAI client when API key is provided."""
-        settings = Settings(_env_file=None,
+        settings = create_test_settings(
             enable_faster_whisper=False,
             openai_api_key="sk-test",
             openai_api_base="https://api.openai.com/v1",
@@ -170,7 +179,7 @@ class TestWhisperServiceStartup:
     @pytest.mark.asyncio
     async def test_startup_without_configuration(self) -> None:
         """startup() with no backend configured doesn't crash."""
-        settings = Settings(_env_file=None,
+        settings = create_test_settings(
             enable_faster_whisper=False,
             openai_api_key=None,
         )
@@ -191,7 +200,7 @@ class TestWhisperServiceShutdown:
     @pytest.mark.asyncio
     async def test_shutdown_clears_resources(self) -> None:
         """shutdown() releases all resources."""
-        settings = Settings(_env_file=None)
+        settings = create_test_settings()
         service = WhisperService(settings=settings)
         service._client = MagicMock()
         service._local_model = MagicMock()
@@ -204,7 +213,7 @@ class TestWhisperServiceShutdown:
     @pytest.mark.asyncio
     async def test_shutdown_is_idempotent(self) -> None:
         """Multiple shutdown calls are safe."""
-        service = WhisperService(settings=Settings(_env_file=None))
+        service = WhisperService(settings=create_test_settings())
         
         await service.shutdown()
         await service.shutdown()  # Should not raise
@@ -220,7 +229,7 @@ class TestWhisperServiceRemoteTranscription:
     @pytest.fixture
     def remote_service(self) -> WhisperService:
         """Provide a service with mocked remote client."""
-        settings = Settings(_env_file=None,
+        settings = create_test_settings(
             enable_faster_whisper=False,
             openai_api_key="sk-test",
         )
@@ -266,7 +275,7 @@ class TestWhisperServiceRemoteTranscription:
             temperature=0.3,
         )
         
-        call_kwargs = remote_service._client.audio.transcriptions.create.call_args.kwargs
+        call_kwargs = remote_service._client.audio.transcriptions.create.call_args.kwargs  # type: ignore[union-attr]
         assert call_kwargs["language"] == "es"
         assert call_kwargs["prompt"] == "Previous context"
         assert call_kwargs["temperature"] == 0.3
@@ -282,7 +291,7 @@ class TestWhisperServiceLocalTranscription:
     @pytest.fixture
     def local_service(self) -> WhisperService:
         """Provide a service with mocked local model."""
-        settings = Settings(_env_file=None, enable_faster_whisper=True)
+        settings = create_test_settings( enable_faster_whisper=True)
         service = WhisperService(settings=settings)
         
         # Mock transcription result
@@ -321,7 +330,7 @@ class TestWhisperServiceLocalTranscription:
             language="ja",
         )
         
-        call_kwargs = local_service._local_model.transcribe.call_args
+        call_kwargs = local_service._local_model.transcribe.call_args  # type: ignore[union-attr]
         assert call_kwargs is not None
 
 
@@ -335,7 +344,7 @@ class TestWhisperServiceErrors:
     @pytest.mark.asyncio
     async def test_transcribe_without_backend_raises(self) -> None:
         """transcribe() raises when no backend is configured."""
-        service = WhisperService(settings=Settings(_env_file=None, enable_faster_whisper=False))
+        service = WhisperService(settings=create_test_settings( enable_faster_whisper=False))
         
         with pytest.raises(RuntimeError, match="not configured"):
             await service.transcribe(
@@ -346,7 +355,7 @@ class TestWhisperServiceErrors:
     @pytest.mark.asyncio
     async def test_remote_api_error_is_handled(self) -> None:
         """Remote API errors are wrapped appropriately."""
-        settings = Settings(_env_file=None,
+        settings = create_test_settings(
             enable_faster_whisper=False,
             openai_api_key="sk-test",
         )
@@ -374,17 +383,17 @@ class TestWhisperServiceIsReady:
 
     def test_is_ready_false_initially(self) -> None:
         """is_ready is False when no backend is configured."""
-        service = WhisperService(settings=Settings(_env_file=None))
+        service = WhisperService(settings=create_test_settings())
         assert service.is_ready is False
 
     def test_is_ready_true_with_client(self) -> None:
         """is_ready is True when remote client is configured."""
-        service = WhisperService(settings=Settings(_env_file=None))
+        service = WhisperService(settings=create_test_settings())
         service._client = MagicMock()
         assert service.is_ready is True
 
     def test_is_ready_true_with_local_model(self) -> None:
         """is_ready is True when local model is loaded."""
-        service = WhisperService(settings=Settings(_env_file=None))
+        service = WhisperService(settings=create_test_settings())
         service._local_model = MagicMock()
         assert service.is_ready is True

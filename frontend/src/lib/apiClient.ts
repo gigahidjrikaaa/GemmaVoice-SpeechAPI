@@ -26,8 +26,20 @@ export async function apiFetch<T>(
     headers.set("X-API-Key", config.apiKey);
   }
 
-  if (options.body && typeof options.body === "object" && !(options.body instanceof FormData)) {
-    headers.set("Content-Type", "application/json");
+  // Set Content-Type for JSON bodies (whether object or already stringified)
+  // Skip if body is FormData or if Content-Type is already set
+  if (options.body && !(options.body instanceof FormData) && !headers.has("Content-Type")) {
+    // If body is an object, stringify it and set content type
+    if (typeof options.body === "object") {
+      options.body = JSON.stringify(options.body);
+      headers.set("Content-Type", "application/json");
+    } else if (typeof options.body === "string") {
+      // If body is a string that looks like JSON, set content type
+      const trimmed = options.body.trim();
+      if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+        headers.set("Content-Type", "application/json");
+      }
+    }
   }
 
   const response = await fetch(url, {
@@ -71,8 +83,20 @@ export async function apiFetchStream(
     headers.set("X-API-Key", config.apiKey);
   }
 
-  if (options.body && typeof options.body === "object" && !(options.body instanceof FormData)) {
-    headers.set("Content-Type", "application/json");
+  // Set Content-Type for JSON bodies (whether object or already stringified)
+  // Skip if body is FormData or if Content-Type is already set
+  if (options.body && !(options.body instanceof FormData) && !headers.has("Content-Type")) {
+    // If body is an object, stringify it and set content type
+    if (typeof options.body === "object") {
+      options.body = JSON.stringify(options.body);
+      headers.set("Content-Type", "application/json");
+    } else if (typeof options.body === "string") {
+      // If body is a string that looks like JSON, set content type
+      const trimmed = options.body.trim();
+      if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+        headers.set("Content-Type", "application/json");
+      }
+    }
   }
 
   const response = await fetch(url, {

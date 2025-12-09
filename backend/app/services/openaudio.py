@@ -11,6 +11,12 @@ from typing import Any, AsyncIterator, Callable, Dict, Optional, Sequence
 
 import httpx
 
+try:
+    import ormsgpack
+    HAS_MSGPACK = True
+except ImportError:
+    HAS_MSGPACK = False
+
 from app.config.settings import Settings
 from app.observability.metrics import record_external_call
 
@@ -105,6 +111,10 @@ class OpenAudioService:
         """Perform blocking TTS synthesis."""
 
         client = await self._require_client()
+        
+        # Use msgpack for voice cloning (with references) if available
+        use_msgpack = bool(references) and HAS_MSGPACK
+        
         payload = self._build_payload(
             text=text,
             response_format=response_format,
@@ -118,24 +128,48 @@ class OpenAudioService:
             latency=latency,
             speed=speed,
             volume=volume,
+            use_msgpack=use_msgpack,
         )
 
         headers = self._auth_headers()
-        logger.debug(
-            "Requesting OpenAudio synthesis: format=%s reference_id=%s",
-            payload.get("format"),
-            payload.get("reference_id"),
-        )
+        
+        # Log payload details (without the full audio data)
+        payload_summary = {k: v for k, v in payload.items() if k != "references"}
+        if "references" in payload:
+            payload_summary["references"] = f"[{len(payload['references'])} reference(s)]"
+        logger.debug("Requesting OpenAudio synthesis with payload: %s, use_msgpack=%s", payload_summary, use_msgpack)
+        
         start = time.perf_counter()
         try:
-            response = await client.post(
-                self._settings.openaudio_tts_path,
-                json=payload,
-                headers=headers,
-            )
+            if use_msgpack:
+                # Use msgpack for voice cloning requests
+                headers["Content-Type"] = "application/msgpack"
+                data = ormsgpack.packb(payload)
+                response = await client.post(
+                    self._settings.openaudio_tts_path,
+                    content=data,
+                    headers=headers,
+                )
+            else:
+                # Use JSON for regular requests
+                response = await client.post(
+                    self._settings.openaudio_tts_path,
+                    json=payload,
+                    headers=headers,
+                )
             response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            # Log the error response body for debugging
+            error_body = exc.response.text[:1000] if exc.response.text else "No response body"
+            logger.error(
+                "OpenAudio synthesis failed: status=%d, body=%s",
+                exc.response.status_code,
+                error_body
+            )
+            record_external_call("openaudio_synthesize", time.perf_counter() - start, success=False)
+            raise RuntimeError(f"OpenAudio synthesis failed: {error_body}") from exc
         except httpx.HTTPError as exc:  # pragma: no cover - network failure
-            logger.exception("OpenAudio synthesis failed")
+            logger.exception("OpenAudio synthesis failed (network error)")
             record_external_call("openaudio_synthesize", time.perf_counter() - start, success=False)
             raise RuntimeError("OpenAudio synthesis failed") from exc
 
@@ -204,6 +238,10 @@ class OpenAudioService:
         """Return an asynchronous iterator that streams synthesis bytes."""
 
         client = await self._require_client()
+        
+        # Use msgpack for voice cloning (with references) if available
+        use_msgpack = bool(references) and HAS_MSGPACK
+        
         payload = self._build_payload(
             text=text,
             response_format=response_format,
@@ -217,9 +255,22 @@ class OpenAudioService:
             latency=latency,
             speed=speed,
             volume=volume,
+            use_msgpack=use_msgpack,
         )
         payload["streaming"] = True
         headers = self._auth_headers()
+        
+        # Log payload details for debugging
+        payload_summary = {k: v for k, v in payload.items() if k != "references"}
+        if "references" in payload:
+            payload_summary["references"] = f"[{len(payload['references'])} reference(s)]"
+        logger.debug("Streaming synthesis request: %s, use_msgpack=%s", payload_summary, use_msgpack)
+        
+        # Prepare msgpack data if needed
+        msgpack_data = None
+        if use_msgpack:
+            headers["Content-Type"] = "application/msgpack"
+            msgpack_data = ormsgpack.packb(payload)
 
         async def iterator() -> AsyncIterator[bytes]:
             retries = self._settings.openaudio_max_retries
@@ -228,13 +279,31 @@ class OpenAudioService:
                 attempt += 1
                 try:
                     start = time.perf_counter()
-                    async with client.stream(
-                        "POST",
-                        self._settings.openaudio_tts_path,
-                        json=payload,
-                        headers=headers,
-                    ) as response:
-                        response.raise_for_status()
+                    # Choose between msgpack and JSON based on voice cloning
+                    if use_msgpack and msgpack_data:
+                        stream_ctx = client.stream(
+                            "POST",
+                            self._settings.openaudio_tts_path,
+                            content=msgpack_data,
+                            headers=headers,
+                        )
+                    else:
+                        stream_ctx = client.stream(
+                            "POST",
+                            self._settings.openaudio_tts_path,
+                            json=payload,
+                            headers=headers,
+                        )
+                    async with stream_ctx as response:
+                        if response.status_code >= 400:
+                            error_body = await response.aread()
+                            error_text = error_body.decode('utf-8', errors='replace')[:1000]
+                            logger.error(
+                                "Streaming synthesis failed: status=%d, body=%s",
+                                response.status_code,
+                                error_text
+                            )
+                            raise RuntimeError(f"OpenAudio streaming failed: {error_text}")
                         async for chunk in response.aiter_bytes():
                             if chunk:
                                 yield chunk
@@ -292,6 +361,7 @@ class OpenAudioService:
         latency: Optional[str],
         speed: Optional[float],
         volume: Optional[float],
+        use_msgpack: bool = False,
     ) -> Dict[str, Any]:
         payload: Dict[str, Any] = {
             "text": text,
@@ -308,8 +378,42 @@ class OpenAudioService:
             payload["normalize"] = normalize
         else:
             payload["normalize"] = self._settings.openaudio_default_normalize
+        
+        # Convert base64 reference strings to the format expected by Fish Speech API
+        # Fish Speech expects: [{"audio": <bytes>, "text": <str>}]
         if references:
-            payload["references"] = list(references)
+            formatted_refs = []
+            for ref_b64 in references:
+                try:
+                    # Decode base64 to raw bytes
+                    audio_bytes = base64.b64decode(ref_b64)
+                    logger.debug(
+                        "Processing reference audio: base64_len=%d, decoded_bytes=%d",
+                        len(ref_b64), len(audio_bytes)
+                    )
+                    if use_msgpack:
+                        # For msgpack, send raw bytes
+                        formatted_refs.append({
+                            "audio": audio_bytes,
+                            "text": "",  # Empty text - zero-shot cloning
+                        })
+                    else:
+                        # For JSON, keep as base64 string (Fish Speech will decode it)
+                        formatted_refs.append({
+                            "audio": ref_b64,
+                            "text": "",
+                        })
+                except Exception as e:
+                    logger.warning("Failed to process reference audio: %s", e)
+                    continue
+            if formatted_refs:
+                payload["references"] = formatted_refs
+                logger.info(
+                    "Voice cloning request with %d reference(s), use_msgpack=%s",
+                    len(formatted_refs),
+                    use_msgpack
+                )
+        
         if top_p is not None:
             payload["top_p"] = top_p
         if temperature is not None:
