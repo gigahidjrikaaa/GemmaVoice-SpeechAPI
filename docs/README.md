@@ -28,7 +28,7 @@ Essential guides for getting started and deploying GemmaVoice:
   - Running services
 
 - **[Migration & Deployment Guide](setup/MIGRATION_AND_DEPLOYMENT.md)** - Port migration and deployment
-  - Port configuration (21250, 21251)
+  - Port configuration (21250-21256)
   - Deployment fixes (model access, Docker tags)
   - Environment variables
   - Troubleshooting
@@ -152,7 +152,7 @@ Guides for frontend development and enhancements:
 2. Download models using the provided scripts
 3. Start services with Docker Compose
 4. Test with **[API Documentation](http://localhost:21250/docs)**
-5. Explore frontend at http://localhost:5173
+5. Explore frontend at <http://localhost:21253>
 
 ### Scenario 2: Voice Cloning
 
@@ -210,23 +210,25 @@ Guides for frontend development and enhancements:
 
 | Service | Port | URL | Purpose |
 |---------|------|-----|---------|
-| **Gemma Service** | 21250 | http://localhost:21250 | LLM text generation API |
-| **OpenAudio Service** | 21251 | http://localhost:21251 | Text-to-speech API |
-| **Frontend Dev** | 5173 | http://localhost:5173 | React UI (development) |
-| **API Docs** | 21250 | http://localhost:21250/docs | Scalar interactive docs |
-| **Health Check** | 21250 | http://localhost:21250/health/live | Service health |
+| **Gemma Service** | 21250 | <http://localhost:21250> | LLM text generation API |
+| **OpenAudio Service** | 21251 | <http://localhost:21251> | Text-to-speech API |
+| **Frontend Dev** | 5173 | <http://localhost:5173> | React UI (development) |
+| **API Docs** | 21250 | <http://localhost:21250/docs> | Scalar interactive docs |
+| **Health Check** | 21250 | <http://localhost:21250/health/live> | Service health |
 
 ---
 
 ## 🛠️ Technology Stack
 
 ### Backend
+
 - **FastAPI** - Modern Python web framework
 - **llama-cpp-python** - Gemma 3 LLM inference
 - **faster-whisper** - Speech-to-text transcription
 - **Fish Speech (OpenAudio)** - Neural TTS with voice cloning
 
 ### Frontend
+
 - **React 18** - UI library
 - **TypeScript** - Type-safe JavaScript
 - **Vite** - Fast build tool
@@ -234,6 +236,7 @@ Guides for frontend development and enhancements:
 - **Tailwind CSS** - Utility-first styling
 
 ### Infrastructure
+
 - **Docker & Docker Compose** - Containerization
 - **Prometheus** - Metrics collection
 - **Grafana** - Visualization dashboards
@@ -301,7 +304,7 @@ When adding new features or fixing bugs:
 ## 📞 Support & Resources
 
 - **GitHub Repository**: [GemmaVoice-SpeechAPI](https://github.com/gigahidjrikaaa/GemmaVoice-SpeechAPI)
-- **API Documentation**: http://localhost:21250/docs (when running)
+- **API Documentation**: <http://localhost:21250/docs> (when running)
 - **Issues**: Report bugs and request features on GitHub
 
 ---
@@ -326,30 +329,36 @@ When adding new features or fixing bugs:
 ## 📋 Quick Reference Card
 
 ### Start Services
+
 ```bash
 cd docker
 docker compose up -d
 ```
 
 ### View Logs
+
 ```bash
 docker compose logs -f
 ```
 
 ### Stop Services
+
 ```bash
 docker compose down
 ```
 
 ### Check Health
+
 ```bash
 curl http://localhost:21250/health/live
 ```
 
 ### Test API
-Open http://localhost:21250/docs in your browser
+
+Open <http://localhost:21250/docs> in your browser
 
 ### Frontend Dev
+
 ```bash
 cd frontend
 npm run dev

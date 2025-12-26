@@ -4,6 +4,7 @@ This module provides the API endpoint for generating LiveKit access tokens
 that allow clients to connect to LiveKit rooms for voice agent sessions.
 """
 
+import datetime
 import logging
 import uuid
 from typing import Optional
@@ -144,31 +145,26 @@ async def generate_token(
     participant_name = request.participant_name or participant_identity
 
     try:
-        # Create access token with video grants
-        token = api.AccessToken(
-            api_key=settings.livekit_api_key,
-            api_secret=settings.livekit_api_secret,
+        ttl = datetime.timedelta(seconds=int(settings.livekit_token_ttl))
+        grants = api.VideoGrants(
+            room_join=True,
+            room=room_name,
+            can_publish=True,
+            can_subscribe=True,
+            can_publish_data=True,
         )
 
-        # Set token identity and name
-        token.identity = participant_identity
-        token.name = participant_name
-
-        # Set TTL
-        token.ttl = settings.livekit_token_ttl
-
-        # Add video grants for full room access
-        token.add_grant(
-            api.VideoGrants(
-                room_join=True,
-                room=room_name,
-                can_publish=True,
-                can_subscribe=True,
-                can_publish_data=True,
+        token = (
+            api.AccessToken(
+                api_key=settings.livekit_api_key,
+                api_secret=settings.livekit_api_secret,
             )
+            .with_identity(participant_identity)
+            .with_name(participant_name)
+            .with_ttl(ttl)
+            .with_grants(grants)
         )
 
-        # Generate JWT
         jwt_token = token.to_jwt()
 
         logger.info(
@@ -237,36 +233,29 @@ async def generate_agent_token(
     agent_name = "Gemma Voice Agent"
 
     try:
-        # Create access token with agent grants
-        token = api.AccessToken(
-            api_key=settings.livekit_api_key,
-            api_secret=settings.livekit_api_secret,
+        ttl = datetime.timedelta(seconds=int(settings.livekit_token_ttl))
+        grants = api.VideoGrants(
+            room_join=True,
+            room=room_name,
+            can_publish=True,
+            can_subscribe=True,
+            can_publish_data=True,
+            can_update_own_metadata=True,
         )
 
-        # Set token identity and name
-        token.identity = agent_identity
-        token.name = agent_name
-
-        # Set TTL
-        token.ttl = settings.livekit_token_ttl
-
-        # Add video grants for agent
-        token.add_grant(
-            api.VideoGrants(
-                room_join=True,
-                room=room_name,
-                can_publish=True,
-                can_subscribe=True,
-                can_publish_data=True,
-                # Agent-specific: can update participant metadata
-                can_update_own_metadata=True,
+        token = (
+            api.AccessToken(
+                api_key=settings.livekit_api_key,
+                api_secret=settings.livekit_api_secret,
             )
+            .with_identity(agent_identity)
+            .with_name(agent_name)
+            .with_ttl(ttl)
+            .with_grants(grants)
+            # Enable SIP if needed
+            .with_sip_grants(api.SIPGrants(call=True))
         )
 
-        # Add agent grant
-        token.add_grant(api.grants.SIPGrants())  # Enable SIP if needed
-
-        # Generate JWT
         jwt_token = token.to_jwt()
 
         logger.info(

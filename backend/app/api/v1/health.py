@@ -55,36 +55,20 @@ async def health_check(request: Request) -> SystemHealth:
                 message="LLM service not initialized",
                 details={"error": "Service not found in app state"}
             )
-        elif llm_service.model is None:
+        elif not llm_service.is_ready:
             components["llm"] = ComponentHealth(
                 status="unhealthy",
                 message="LLM model not loaded",
-                details={"error": "Model is None"}
+                details={"error": "Model is not ready"}
             )
         else:
-            # Test a simple generation to verify model works
-            try:
-                # Quick test without streaming
-                test_output = llm_service.model(
-                    prompt="Test",
-                    max_tokens=1,
-                    temperature=0.0,
-                    stream=False
-                )
-                components["llm"] = ComponentHealth(
-                    status="healthy",
-                    message="Gemma 3 LLM service operational",
-                    details={
-                        "model_loaded": True,
-                        "test_passed": True
-                    }
-                )
-            except Exception as e:
-                components["llm"] = ComponentHealth(
-                    status="degraded",
-                    message="LLM model loaded but test failed",
-                    details={"error": str(e), "model_loaded": True}
-                )
+            components["llm"] = ComponentHealth(
+                status="healthy",
+                message="Gemma 3 LLM service operational",
+                details={
+                    "model_loaded": True,
+                }
+            )
     except Exception as e:
         logger.exception("Error checking LLM service health")
         components["llm"] = ComponentHealth(

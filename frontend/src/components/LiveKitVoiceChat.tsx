@@ -17,12 +17,13 @@ import {
   useTracks,
   useVoiceAssistant,
   BarVisualizer,
-  VoiceAssistantControlBar,
 } from "@livekit/components-react";
-import { ConnectionState, RoomEvent, Track } from "livekit-client";
+import { ConnectionState, Track } from "livekit-client";
 import { useClientConfig } from "../context/ConfigContext";
 import { useToast } from "./Toast";
-import { Mic, MicOff, Phone, PhoneOff, Volume2, Loader2, AlertCircle } from "lucide-react";
+import { apiFetch } from "../lib/api";
+import { errorLogger } from "../lib/error";
+import { Mic, MicOff, Phone, PhoneOff, Volume2, Loader2, AlertCircle, Signal } from "lucide-react";
 
 // --- Types ---
 
@@ -44,6 +45,7 @@ interface LiveKitStatus {
 function useConnectionDetails() {
   const { config } = useClientConfig();
   const [status, setStatus] = useState<LiveKitStatus | null>(null);
+  const [statusError, setStatusError] = useState<string | null>(null);
   const [tokenData, setTokenData] = useState<TokenResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -51,26 +53,17 @@ function useConnectionDetails() {
   // Check if LiveKit is enabled
   const checkStatus = useCallback(async () => {
     try {
-      const headers: Record<string, string> = {
-        "Content-Type": "application/json",
-      };
-      if (config.apiKey) {
-        headers["X-API-Key"] = config.apiKey;
-      }
-
-      const res = await fetch(`${config.baseUrl}/v1/livekit/status`, {
-        headers,
-      });
-      if (!res.ok) throw new Error("Failed to check LiveKit status");
-      const data: LiveKitStatus = await res.json();
+      const { data } = await apiFetch<LiveKitStatus>(config, "/v1/livekit/status");
       setStatus(data);
+      setStatusError(null);
       return data;
     } catch (err) {
-      console.error("LiveKit status check failed:", err);
+      errorLogger.logError(err, '/v1/livekit/status');
       setStatus({ enabled: false, url: null, default_room: null });
+      setStatusError(errorLogger.getUserFriendlyMessage(err));
       return null;
     }
-  }, [config.baseUrl, config.apiKey]);
+  }, [config]);
 
   // Request a new token
   const requestToken = useCallback(async (roomName?: string) => {
@@ -78,37 +71,25 @@ function useConnectionDetails() {
     setError(null);
 
     try {
-      const headers: Record<string, string> = {
-        "Content-Type": "application/json",
-      };
-      if (config.apiKey) {
-        headers["X-API-Key"] = config.apiKey;
-      }
-
-      const res = await fetch(`${config.baseUrl}/v1/livekit/token`, {
+      errorLogger.logInfo('Requesting LiveKit token', { roomName });
+      const { data } = await apiFetch<TokenResponse>(config, "/v1/livekit/token", {
         method: "POST",
-        headers,
         body: JSON.stringify({
           room_name: roomName,
         }),
       });
 
-      if (!res.ok) {
-        const errData = await res.json().catch(() => ({}));
-        throw new Error(errData.detail || "Failed to get token");
-      }
-
-      const data: TokenResponse = await res.json();
       setTokenData(data);
       return data;
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Token request failed";
+      errorLogger.logError(err, '/v1/livekit/token');
+      const message = errorLogger.getUserFriendlyMessage(err);
       setError(message);
       throw err;
     } finally {
       setLoading(false);
     }
-  }, [config.baseUrl, config.apiKey]);
+  }, [config]);
 
   // Clear token
   const clearToken = useCallback(() => {
@@ -118,6 +99,7 @@ function useConnectionDetails() {
 
   return {
     status,
+    statusError,
     tokenData,
     loading,
     error,
@@ -154,15 +136,15 @@ function RoomControls({ onDisconnect }: { onDisconnect: () => void }) {
   const isConnected = connectionState === ConnectionState.Connected;
 
   return (
-    <div className="flex items-center justify-center gap-4 p-4">
+    <div className="flex items-center justify-center gap-6 p-6 bg-slate-900/50 border-t border-slate-800">
       {/* Mic Toggle */}
       <button
         onClick={toggleMicrophone}
         disabled={!isConnected}
-        className={`flex items-center justify-center w-14 h-14 rounded-full transition-all ${
+        className={`flex items-center justify-center w-16 h-16 rounded-full transition-all shadow-lg ${
           isMuted
-            ? "bg-red-500/20 text-red-400 hover:bg-red-500/30"
-            : "bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30"
+            ? "bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-slate-200"
+            : "bg-emerald-500 text-slate-950 hover:bg-emerald-400 hover:scale-105"
         } disabled:opacity-50 disabled:cursor-not-allowed`}
         title={isMuted ? "Unmute" : "Mute"}
       >
@@ -173,7 +155,7 @@ function RoomControls({ onDisconnect }: { onDisconnect: () => void }) {
       <button
         onClick={handleDisconnect}
         disabled={!isConnected}
-        className="flex items-center justify-center w-14 h-14 rounded-full bg-red-500/20 text-red-400 hover:bg-red-500/30 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+        className="flex items-center justify-center w-16 h-16 rounded-full bg-red-500/20 text-red-400 hover:bg-red-500/30 hover:scale-105 transition-all shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
         title="End Call"
       >
         <PhoneOff className="w-6 h-6" />
@@ -190,65 +172,71 @@ function VoiceAssistantView() {
   const tracks = useTracks([Track.Source.Microphone], { onlySubscribed: true });
 
   // Find agent's audio track (type explicitly to avoid implicit any)
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const agentTrack = tracks.find(
     (t: { participant: { identity: string } }) => t.participant.identity === "gemma-voice-agent"
   );
 
   return (
-    <div className="flex flex-col items-center justify-center gap-6 p-6">
+    <div className="flex flex-col items-center justify-center gap-8 p-8 w-full max-w-2xl mx-auto">
       {/* Agent Status */}
-      <div className="text-center">
-        <div className="flex items-center justify-center gap-2 mb-2">
-          <div
-            className={`w-3 h-3 rounded-full ${
+      <div className="text-center space-y-2">
+        <div className="relative inline-block">
+          <div className={`w-24 h-24 rounded-full flex items-center justify-center transition-all duration-500 ${
+            state === "speaking" 
+              ? "bg-emerald-500/20 shadow-[0_0_30px_rgba(16,185,129,0.3)]" 
+              : "bg-slate-800/50"
+          }`}>
+            <div className={`w-20 h-20 rounded-full flex items-center justify-center transition-all duration-300 ${
               state === "listening"
-                ? "bg-blue-500 animate-pulse"
+                ? "bg-blue-500/20 animate-pulse"
                 : state === "speaking"
-                ? "bg-emerald-500 animate-pulse"
+                ? "bg-emerald-500/30"
                 : state === "thinking"
-                ? "bg-yellow-500 animate-pulse"
-                : "bg-slate-600"
-            }`}
-          />
-          <span className="text-sm text-slate-400 capitalize">
-            {state || "Waiting for agent..."}
-          </span>
+                ? "bg-amber-500/20 animate-pulse"
+                : "bg-slate-800"
+            }`}>
+              {state === "speaking" ? (
+                <Volume2 className="w-8 h-8 text-emerald-400" />
+              ) : state === "listening" ? (
+                <Mic className="w-8 h-8 text-blue-400" />
+              ) : (
+                <div className="w-3 h-3 rounded-full bg-slate-500" />
+              )}
+            </div>
+          </div>
+          
+          {/* Status Badge */}
+          <div className="absolute -bottom-2 left-1/2 -translate-x-1/2 px-3 py-1 rounded-full bg-slate-900 border border-slate-800 text-[10px] font-medium uppercase tracking-wider text-slate-400 whitespace-nowrap shadow-sm">
+            {state || "Idle"}
+          </div>
         </div>
+        
         {remoteParticipants.length === 0 && (
-          <p className="text-xs text-slate-500">
-            Agent is connecting to the room...
+          <p className="text-xs text-slate-500 animate-pulse">
+            Waiting for agent to join...
           </p>
         )}
       </div>
 
       {/* Audio Visualizer */}
-      <div className="w-full max-w-md h-24 bg-slate-900/50 rounded-lg overflow-hidden">
-        {audioTrack && (
+      <div className="w-full h-32 bg-slate-950/50 rounded-xl border border-slate-800/50 overflow-hidden relative">
+        {audioTrack ? (
           <BarVisualizer
             state={state}
             trackRef={audioTrack}
-            barCount={50}
-            options={{
-              minHeight: 2,
-            }}
-            className="h-full"
+            barCount={40}
+            options={{ minHeight: 4 }}
+            className="h-full w-full opacity-80"
           />
-        )}
-        {!audioTrack && (
-          <div className="flex items-center justify-center h-full text-slate-600">
-            <Volume2 className="w-8 h-8" />
-          </div>
-        )}
-      </div>
-
-      {/* Connection Info */}
-      <div className="text-xs text-slate-500 text-center">
-        {remoteParticipants.length > 0 ? (
-          <span className="text-emerald-400">
-            ✓ Agent connected
-          </span>
         ) : (
-          <span>Waiting for agent to join...</span>
+          <div className="absolute inset-0 flex items-center justify-center">
+            <div className="flex gap-1">
+              {[1, 2, 3, 4, 5].map((i) => (
+                <div key={i} className="w-1 h-8 bg-slate-800 rounded-full" />
+              ))}
+            </div>
+          </div>
         )}
       </div>
     </div>
@@ -261,42 +249,47 @@ function RoomSession({ onDisconnect }: { onDisconnect: () => void }) {
   const connectionState = useConnectionState();
   
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-full bg-slate-950">
       {/* Connection Status Bar */}
-      <div className="flex items-center justify-between px-4 py-2 bg-slate-900/50 border-b border-slate-800">
+      <div className="flex items-center justify-between px-4 py-3 bg-slate-900/50 border-b border-slate-800">
         <div className="flex items-center gap-2">
-          <div
-            className={`w-2 h-2 rounded-full ${
-              connectionState === ConnectionState.Connected
-                ? "bg-emerald-500"
-                : connectionState === ConnectionState.Connecting
-                ? "bg-yellow-500 animate-pulse"
-                : "bg-red-500"
-            }`}
-          />
-          <span className="text-xs text-slate-400">
-            {connectionState === ConnectionState.Connected
-              ? "Connected"
+          <div className={`w-2 h-2 rounded-full ${
+            connectionState === ConnectionState.Connected
+              ? "bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.4)]"
               : connectionState === ConnectionState.Connecting
-              ? "Connecting..."
-              : connectionState === ConnectionState.Reconnecting
-              ? "Reconnecting..."
+              ? "bg-amber-500 animate-pulse"
+              : "bg-red-500"
+          }`} />
+          <span className="text-xs font-medium text-slate-300">
+            {connectionState === ConnectionState.Connected
+              ? "Connected to Room"
+              : connectionState === ConnectionState.Connecting
+              ? "Establishing Connection..."
               : "Disconnected"}
           </span>
+        </div>
+        <div className="flex items-center gap-2 text-xs text-slate-500">
+          <Signal className="w-3 h-3" />
+          <span>LiveKit SFU</span>
         </div>
       </div>
 
       {/* Main Content */}
-      <div className="flex-1 flex flex-col items-center justify-center">
+      <div className="flex-1 flex flex-col items-center justify-center relative overflow-hidden">
+        {/* Background decoration */}
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-emerald-900/10 via-slate-950/50 to-slate-950 pointer-events-none" />
+        
         {connectionState === ConnectionState.Connecting ? (
-          <div className="flex flex-col items-center gap-4">
+          <div className="flex flex-col items-center gap-4 z-10">
             <Loader2 className="w-8 h-8 text-emerald-400 animate-spin" />
-            <p className="text-sm text-slate-400">Connecting to room...</p>
+            <p className="text-sm text-slate-400">Connecting to secure room...</p>
           </div>
         ) : connectionState === ConnectionState.Connected ? (
-          <VoiceAssistantView />
+          <div className="z-10 w-full">
+            <VoiceAssistantView />
+          </div>
         ) : (
-          <div className="flex flex-col items-center gap-4 text-center">
+          <div className="flex flex-col items-center gap-4 text-center z-10">
             <AlertCircle className="w-8 h-8 text-red-400" />
             <p className="text-sm text-slate-400">Connection lost</p>
           </div>
@@ -313,11 +306,16 @@ function RoomSession({ onDisconnect }: { onDisconnect: () => void }) {
 }
 
 // --- Main Component ---
+export interface LiveKitVoiceChatProps {
+  inputDeviceId?: string;
+  outputDeviceId?: string;
+}
 
-export function LiveKitVoiceChat() {
+export function LiveKitVoiceChat({ inputDeviceId = "default", outputDeviceId = "default" }: LiveKitVoiceChatProps) {
   const { push } = useToast();
   const {
     status,
+    statusError,
     tokenData,
     loading,
     error,
@@ -325,6 +323,8 @@ export function LiveKitVoiceChat() {
     requestToken,
     clearToken,
   } = useConnectionDetails();
+
+  const { config } = useClientConfig();
 
   const [isSessionActive, setIsSessionActive] = useState(false);
   const hasCheckedStatus = useRef(false);
@@ -342,11 +342,12 @@ export function LiveKitVoiceChat() {
     try {
       await requestToken();
       setIsSessionActive(true);
-      push({ title: "Connecting to voice session..." });
+      push({ title: "Connecting...", description: "Establishing voice session" });
     } catch (err) {
+      const message = errorLogger.getUserFriendlyMessage(err);
       push({
         title: "Connection Failed",
-        description: err instanceof Error ? err.message : "Unknown error",
+        description: message,
         variant: "error",
       });
     }
@@ -356,12 +357,12 @@ export function LiveKitVoiceChat() {
   const endSession = useCallback(() => {
     setIsSessionActive(false);
     clearToken();
-    push({ title: "Session ended" });
+    push({ title: "Session Ended", description: "Voice chat disconnected" });
   }, [clearToken, push]);
 
   // Handle room events
   const handleConnected = useCallback(() => {
-    push({ title: "Connected to voice room" });
+    push({ title: "Connected", description: "Voice session active" });
   }, [push]);
 
   const handleDisconnected = useCallback(() => {
@@ -372,7 +373,7 @@ export function LiveKitVoiceChat() {
 
   const handleError = useCallback(
     (err: Error) => {
-      console.error("Room error:", err);
+      errorLogger.logError(err, 'LiveKit Room Error');
       push({
         title: "Room Error",
         description: err.message,
@@ -385,25 +386,36 @@ export function LiveKitVoiceChat() {
   // Render not available state
   if (status && !status.enabled) {
     return (
-      <div className="flex flex-col items-center justify-center h-full p-8 text-center">
-        <AlertCircle className="w-12 h-12 text-slate-600 mb-4" />
+      <div className="flex flex-col items-center justify-center h-full p-8 text-center bg-slate-950/50">
+        <div className="w-16 h-16 rounded-full bg-slate-900 flex items-center justify-center mb-4">
+          <AlertCircle className="w-8 h-8 text-slate-600" />
+        </div>
         <h3 className="text-lg font-medium text-slate-200 mb-2">
           LiveKit Not Configured
         </h3>
-        <p className="text-sm text-slate-400 max-w-md">
+        <p className="text-sm text-slate-400 max-w-md leading-relaxed">
           LiveKit voice chat requires server configuration. Please set{" "}
-          <code className="px-1.5 py-0.5 bg-slate-800 rounded text-xs">
+          <code className="px-1.5 py-0.5 bg-slate-800 rounded text-xs text-emerald-400 font-mono">
             LIVEKIT_URL
           </code>
           ,{" "}
-          <code className="px-1.5 py-0.5 bg-slate-800 rounded text-xs">
+          <code className="px-1.5 py-0.5 bg-slate-800 rounded text-xs text-emerald-400 font-mono">
             LIVEKIT_API_KEY
           </code>
           , and{" "}
-          <code className="px-1.5 py-0.5 bg-slate-800 rounded text-xs">
+          <code className="px-1.5 py-0.5 bg-slate-800 rounded text-xs text-emerald-400 font-mono">
             LIVEKIT_API_SECRET
           </code>{" "}
           environment variables.
+        </p>
+        <p className="mt-4 text-xs text-slate-500 max-w-md leading-relaxed">
+          Current API base URL: <span className="font-mono">{config.baseUrl}</span>
+          {statusError ? (
+            <>
+              <br />
+              Status check error: <span className="font-mono">{statusError}</span>
+            </>
+          ) : null}
         </p>
       </div>
     );
@@ -411,6 +423,13 @@ export function LiveKitVoiceChat() {
 
   // Render session active state with LiveKitRoom
   if (isSessionActive && tokenData) {
+    const roomOptions = {
+      audioCaptureDefaults:
+        inputDeviceId && inputDeviceId !== "default" ? { deviceId: inputDeviceId } : undefined,
+      audioOutput:
+        outputDeviceId && outputDeviceId !== "default" ? { deviceId: outputDeviceId } : undefined,
+    };
+
     return (
       <LiveKitRoom
         serverUrl={tokenData.url}
@@ -418,6 +437,7 @@ export function LiveKitVoiceChat() {
         connect={true}
         audio={true}
         video={false}
+        options={roomOptions}
         onConnected={handleConnected}
         onDisconnected={handleDisconnected}
         onError={handleError}
@@ -430,22 +450,23 @@ export function LiveKitVoiceChat() {
 
   // Render start session UI
   return (
-    <div className="flex flex-col items-center justify-center h-full p-8">
+    <div className="flex flex-col items-center justify-center h-full p-8 bg-slate-950/30">
       <div className="max-w-md text-center">
-        <div className="w-16 h-16 mx-auto mb-6 rounded-full bg-gradient-to-br from-emerald-500/20 to-cyan-500/20 flex items-center justify-center">
+        <div className="w-20 h-20 mx-auto mb-6 rounded-full bg-gradient-to-br from-emerald-500/20 to-cyan-500/20 flex items-center justify-center shadow-[0_0_30px_rgba(16,185,129,0.1)]">
           <Phone className="w-8 h-8 text-emerald-400" />
         </div>
 
-        <h3 className="text-xl font-semibold text-slate-200 mb-2">
+        <h3 className="text-xl font-semibold text-slate-200 mb-3">
           LiveKit Voice Chat
         </h3>
-        <p className="text-sm text-slate-400 mb-6">
+        <p className="text-sm text-slate-400 mb-8 leading-relaxed">
           Start a real-time voice conversation with the Gemma AI assistant.
-          This mode uses LiveKit for low-latency, high-quality audio.
+          This mode uses LiveKit for low-latency, high-quality audio streaming.
         </p>
 
         {error && (
-          <div className="mb-4 p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-sm">
+          <div className="mb-6 p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-sm flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 shrink-0" />
             {error}
           </div>
         )}
@@ -453,7 +474,7 @@ export function LiveKitVoiceChat() {
         <button
           onClick={startSession}
           disabled={loading || (status !== null && !status.enabled)}
-          className="inline-flex items-center gap-2 px-6 py-3 rounded-lg bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30 transition-all disabled:opacity-50 disabled:cursor-not-allowed font-medium"
+          className="w-full inline-flex items-center justify-center gap-3 px-6 py-4 rounded-xl bg-emerald-500 text-slate-950 hover:bg-emerald-400 hover:scale-[1.02] transition-all disabled:opacity-50 disabled:cursor-not-allowed font-bold shadow-lg shadow-emerald-500/20"
         >
           {loading ? (
             <>
@@ -468,8 +489,9 @@ export function LiveKitVoiceChat() {
           )}
         </button>
 
-        <p className="mt-4 text-xs text-slate-500">
-          Ensure you have microphone permissions enabled in your browser.
+        <p className="mt-6 text-xs text-slate-500 flex items-center justify-center gap-2">
+          <Mic className="w-3 h-3" />
+          Microphone permission required
         </p>
       </div>
     </div>

@@ -34,6 +34,9 @@ export interface UseVADOptions {
     preSpeechPadMs?: number;
     /** Minimum speech duration in ms before triggering (default 150) */
     minSpeechMs?: number;
+
+    /** Optional audio input deviceId to use for microphone capture */
+    inputDeviceId?: string;
 }
 
 export interface UseVADReturn extends VADState {
@@ -57,6 +60,7 @@ export function useVAD(options: UseVADOptions = {}): UseVADReturn {
         redemptionMs = 300,
         preSpeechPadMs = 100,
         minSpeechMs = 150,
+        inputDeviceId,
     } = options;
 
     const [state, setState] = useState<VADState>({
@@ -105,6 +109,21 @@ export function useVAD(options: UseVADOptions = {}): UseVADReturn {
                 },
                 onFrameProcessed: (probs) => {
                     callbacksRef.current.onFrameProcessed?.(probs);
+                },
+                getStream: async () => {
+                    const audioConstraints: MediaTrackConstraints = {
+                        channelCount: 1,
+                        echoCancellation: true,
+                        autoGainControl: true,
+                        noiseSuppression: true,
+                        ...(inputDeviceId && inputDeviceId !== 'default'
+                            ? { deviceId: { exact: inputDeviceId } }
+                            : {}),
+                    };
+
+                    return await navigator.mediaDevices.getUserMedia({
+                        audio: audioConstraints,
+                    });
                 },
             };
 

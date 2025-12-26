@@ -6,6 +6,7 @@
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 Complete speech pipeline combining:
+
 - 🤖 **LLM**: Gemma 3 12B (via llama-cpp-python)
 - 🎤 **STT**: Faster-Whisper (CTranslate2 with GPU)
 - 🔊 **TTS**: OpenAudio-S1-mini (Fish-speech)
@@ -19,21 +20,26 @@ Complete speech pipeline combining:
 ### Quick Links
 
 #### 🚀 Getting Started
+
 - **[Local Setup Guide](docs/setup/LOCAL_SETUP_GUIDE.md)** - Complete development setup
 - **[Migration & Deployment](docs/setup/MIGRATION_AND_DEPLOYMENT.md)** - Port configuration and deployment fixes
 - **[GPU Configuration](backend/GPU_SETUP.md)** - Windows/WSL GPU setup
+- **[LiveKit Integration](docs/LIVEKIT_INTEGRATION.md)** - Real-time voice agent setup
 
 #### 📖 API Documentation
+
 - **[Interactive API Docs](http://localhost:21250/docs)** - Scalar documentation (after starting services)
 - **[Scalar Setup Guide](docs/scalar/SETUP.md)** - Get Scalar running
 - **[OpenAPI Specification](docs/scalar/openapi.yaml)** - Complete API reference
 
 #### 🎤 Features & Guides
+
 - **[Voice Cloning Guide](docs/guides/VOICE_CLONING_GUIDE.md)** - Custom voice references for Bahasa Indonesia
 - **[Frontend Enhancements](docs/FRONTEND_ENHANCEMENTS.md)** - Error logging and UI improvements
 - **[Live Conversation Guide](frontend/LIVE_CONVERSATION_GUIDE.md)** - Real-time conversation features
 
 #### 🚢 Production & Operations
+
 - **[CI/CD Setup](deploy/README.md)** - Production deployment with GitHub Actions
 - **[Docker Configuration](docker/README.md)** - Container setup and troubleshooting
 
@@ -64,41 +70,32 @@ npm install
 npm run dev
 ```
 
-The app defaults to `http://localhost:8000` but you can override the base URL and API key from the
-"Connection settings" drawer in the UI. Build artifacts are emitted to `frontend/dist` via
-`npm run build` and can be hosted on any static site provider or mounted behind the FastAPI service.
+The app defaults to `http://localhost:21253` (via Docker) or `http://localhost:5173` (local dev).
+You can override the base URL and API key from the "Connection settings" drawer in the UI.
 
 ## Speech Stack Roadmap
 
-The team is extending the text-only Gemma 3 API into a speech-capable platform powered by OpenAI Whisper for speech-to-text (STT) and OpenAudio-S1-mini for text-to-speech (TTS). The roadmap below focuses on compatibility with the upstream projects and our existing FastAPI/Docker deployment.
+The team is extending the text-only Gemma 3 API into a speech-capable platform powered by OpenAI Whisper for speech-to-text (STT) and OpenAudio-S1-mini for text-to-speech (TTS).
 
-### Phase 0 — Technical due diligence
+### Phase 1 — Application scaffolding (Completed)
 
-1. **Repository alignment**
-   - Track the upstream release branches for [OpenAI Whisper](https://github.com/openai/whisper) and [Fish Audio / OpenAudio](https://github.com/fishaudio/fish-speech) to understand Python version requirements and CUDA expectations.
-   - Decide whether Whisper will run through the `openai` client (managed service) or via local inference (`pip install -U openai-whisper`) to simplify dependency management inside our container.
-   - Validate that Fish Audio’s server and model checkpoints can be installed directly in our base image, noting PyTorch + torchaudio requirements and GPU memory expectations for OpenAudio-S1-mini.
-2. **Container baseline updates**
-   - Extend the Docker image with FFmpeg (via `apt-get install ffmpeg`) and audio codecs required by Whisper and OpenAudio examples.
-   - Confirm CUDA toolkit/library compatibility between Whisper, OpenAudio, and the existing Gemma runtime to avoid conflicting `torch` builds.
+- Service decomposition and modular layout
+- Pydantic models for audio payloads
+- Configuration and secrets management
 
-### Phase 1 — Application scaffolding
+### Phase 2 — STT integration with Faster Whisper (Completed)
 
-1. **Service decomposition**
-   - Refactor `backend/app/main.py` into a modular layout (`app/services`, `app/api`, `app/config`) so the speech services can share FastAPI lifespan hooks with the current LLM loader without repeated initialization.
-   - Define Pydantic models for audio payloads (binary uploads, base64 JSON envelopes, and WebSocket frames) plus transcript/voice settings.
-2. **Configuration and secrets**
-   - Introduce `pydantic-settings` for managing OpenAI API keys, OpenAudio authentication (token, Hugging Face access if running local checkpoints), default sample rates, and feature flags.
-   - Add schema validation for environment variables so misconfigured GPU IDs, missing checkpoints, or absent API keys fail fast at startup.
+- Local inference with Faster Whisper
+- Preprocessing utilities
+- Streaming support
 
-### Phase 2 — STT integration with Faster Whisper
+### Phase 3 — LiveKit Integration (Completed)
 
-1. **Local inference path**
-   - Package Faster Whisper as a callable service that loads the desired model tier (`base`, `large-v3`, or the faster `tiny.en`) once during lifespan startup, exposing async helpers that offload CPU-heavy work with `asyncio.to_thread` to retain non-blocking FastAPI handlers.
-   - Provide preprocessing utilities that normalize audio to 16 kHz mono PCM using `soundfile`/`torchaudio`, mirroring Whisper’s reference scripts for compatibility.
-   - Support both file uploads and streaming (chunk assembly plus VAD-driven segmentation) so we can reuse the service for REST and WebSocket routes.
-2. **Managed API fallback**
-   - Implement an adapter for OpenAI’s hosted Whisper (`client.audio.transcriptions.create`) with retry/backoff logic and consistent response schemas, so deployments without GPUs can switch via configuration.
+- Real-time voice agent with LiveKit
+- Custom plugins for LLM, TTS, and STT
+- Frontend integration with LiveKit components
+
+  - Implement an adapter for OpenAI’s hosted Whisper (`client.audio.transcriptions.create`) with retry/backoff logic and consistent response schemas, so deployments without GPUs can switch via configuration.
 
 ### Phase 3 — TTS integration with OpenAudio-S1-mini
 
@@ -232,21 +229,25 @@ Recent changes harden the platform for production operations:
 
 This service is designed to run within a Docker container but relies on host-level hardware support. Before you begin, ensure the following are installed and correctly configured on the host machine.
 
-1.  **NVIDIA Drivers:** The host must have the correct proprietary NVIDIA drivers installed.
-    * **Verification:**
+1. **NVIDIA Drivers:** The host must have the correct proprietary NVIDIA drivers installed.
+    - **Verification:**
+
         ```bash
         nvidia-smi
         ```
+
         This command should successfully display information about the installed GPUs (Tesla P40, Quadro M4000) without errors.
 
-2.  **Docker Engine:** The containerization platform.
-    * **Verification:**
+2. **Docker Engine:** The containerization platform.
+    - **Verification:**
+
         ```bash
         docker --version
         ```
 
-3.  **NVIDIA Container Toolkit:** The bridge that allows Docker containers to access the host's GPUs.
-    * **Verification:** This command runs a temporary container and asks it to execute `nvidia-smi`. A successful run confirms the toolkit is correctly configured.
+3. **NVIDIA Container Toolkit:** The bridge that allows Docker containers to access the host's GPUs.
+    - **Verification:** This command runs a temporary container and asks it to execute `nvidia-smi`. A successful run confirms the toolkit is correctly configured.
+
         ```bash
         sudo docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi
         ```
@@ -255,31 +256,17 @@ This service is designed to run within a Docker container but relies on host-lev
 
 ## 2. Running with Docker Compose
 
-
-
 **Prerequisite: Install Git LFS**
-
-
 
 This repository uses [Git LFS](https://git-lfs.github.com/) to manage large model files. Before you can run the application, you need to install Git LFS on your system. You can find installation instructions on the [Git LFS website](https://git-lfs.github.com/).
 
-
-
 The entire application stack—including `gemma_service`, the upstream `openaudio_api` container, the official `openaudio_webui` Gradio experience, and the React playground frontend—is managed via Docker Compose. This is the recommended way to run the application for both development and production so that `/v1/tts` talks directly to the maintained OpenAudio-S1-mini backend while the UI stays in sync with the running API.
-
-
 
 **A. Download Model Weights**
 
-
-
 Before starting the services, you need to download the OpenAudio-S1-mini model weights from Hugging Face.
 
-
-
-1.  Create a directory for the model weights:
-
-
+1. Create a directory for the model weights:
 
     ```bash
 
@@ -287,9 +274,7 @@ Before starting the services, you need to download the OpenAudio-S1-mini model w
 
     ```
 
-
-
-2.  Download the model weights from the [OpenAudio-S1-mini Hugging Face repository](https://huggingface.co/fishaudio/OpenAudio-S1-mini) and place them in the `backend/openaudio-checkpoints` directory.
+2. Download the model weights from the [OpenAudio-S1-mini Hugging Face repository](https://huggingface.co/fishaudio/OpenAudio-S1-mini) and place them in the `backend/openaudio-checkpoints` directory.
 
 With the checkpoints in place, `docker compose up -d` will start:
 
@@ -300,15 +285,9 @@ With the checkpoints in place, `docker compose up -d` will start:
 
 Both OpenAudio containers share the same checkpoints/references volume so you can try voices in the Web UI and immediately reuse the same assets through the API.
 
-
-
 **B. Start the Services**
 
-
-
 From the `docker/` directory, run:
-
-
 
 ```bash
 
@@ -316,19 +295,11 @@ docker-compose up --build -d
 
 ```
 
-
-
 This command will build the `backend` image, pull the `fishaudio/fish-speech` image, and start both services in detached mode.
-
-
 
 **C. Stop the Services**
 
-
-
 To stop the services, run:
-
-
 
 ```bash
 

@@ -1,4 +1,4 @@
-import { ChangeEvent, useEffect, useState } from 'react';
+import { ChangeEvent, useCallback, useEffect, useState } from 'react';
 import { formatFileSize, getAudioDuration, formatDuration } from '../lib/audioUtils';
 
 interface VoiceCloningInputProps {
@@ -29,10 +29,33 @@ export function VoiceCloningInput({
   const [fileInfos, setFileInfos] = useState<FileInfo[]>([]);
   const [isRecording, setIsRecording] = useState(false);
   const [mediaRecorder, setMediaRecorder] = useState<MediaRecorder | null>(null);
+  const [audioInputs, setAudioInputs] = useState<MediaDeviceInfo[]>([]);
+  const [selectedInputDeviceId, setSelectedInputDeviceId] = useState<string>('default');
+
+  const refreshDevices = useCallback(async () => {
+    try {
+      if (!navigator.mediaDevices?.enumerateDevices) return;
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      setAudioInputs(devices.filter((d) => d.kind === 'audioinput'));
+    } catch (error) {
+      console.warn('Failed to enumerate audio input devices', error);
+    }
+  }, []);
+
+  useEffect(() => {
+    refreshDevices();
+    const mediaDevices = navigator.mediaDevices;
+    mediaDevices?.addEventListener?.('devicechange', refreshDevices);
+    return () => mediaDevices?.removeEventListener?.('devicechange', refreshDevices);
+  }, [refreshDevices]);
 
   const startRecording = async () => {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const audioConstraints: MediaTrackConstraints | boolean =
+        selectedInputDeviceId && selectedInputDeviceId !== 'default'
+          ? { deviceId: { exact: selectedInputDeviceId } }
+          : true;
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints });
       const recorder = new MediaRecorder(stream);
       const chunks: BlobPart[] = [];
 
@@ -130,6 +153,25 @@ export function VoiceCloningInput({
         <p className="text-xs text-slate-400">
           Upload 1-{maxFiles} reference audio files (3-10 seconds each recommended) to clone the voice characteristics.
         </p>
+      )}
+
+      {enabled && (
+        <div className="flex flex-col gap-1.5">
+          <label className="text-[10px] font-medium text-slate-500 uppercase tracking-wider">Recording Input Device</label>
+          <select
+            className="rounded bg-slate-900 border border-slate-800 px-2 py-1.5 text-xs text-slate-300 focus:border-emerald-500/50 focus:outline-none"
+            value={selectedInputDeviceId}
+            onChange={(e) => setSelectedInputDeviceId(e.target.value)}
+            disabled={isRecording}
+          >
+            <option value="default">Default</option>
+            {audioInputs.map((device, index) => (
+              <option key={device.deviceId} value={device.deviceId}>
+                {device.label || `Microphone ${index + 1}`}
+              </option>
+            ))}
+          </select>
+        </div>
       )}
 
       {/* File Upload & Recording Area */}

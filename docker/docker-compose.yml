@@ -6,6 +6,7 @@ services:
     image: gemma-voice-api
     container_name: gemma_service
     restart: always
+    init: true
     deploy:
       resources:
         reservations:
@@ -40,17 +41,23 @@ services:
       - OPENAUDIO_TIMEOUT_SECONDS=${OPENAUDIO_TIMEOUT_SECONDS:-120}
       - OPENAUDIO_MAX_RETRIES=${OPENAUDIO_MAX_RETRIES:-3}
       # LiveKit configuration
-      - LIVEKIT_URL=${LIVEKIT_URL:-ws://livekit:7880}
+      # NOTE: This URL is returned to the browser. It must be reachable from the user's machine,
+      # not just from within the Docker network.
+      - LIVEKIT_URL=${LIVEKIT_URL:-ws://localhost:21254}
       - LIVEKIT_API_KEY=${LIVEKIT_API_KEY:-devkey}
-      - LIVEKIT_API_SECRET=${LIVEKIT_API_SECRET:-secret}
+      # Use a sufficiently long default secret for local dev.
+      - LIVEKIT_API_SECRET=${LIVEKIT_API_SECRET:-devsecretdevsecretdevsecretdevsecret}
       - LIVEKIT_ROOM_NAME=${LIVEKIT_ROOM_NAME:-gemma-voice-room}
     # Expose the port to the host machine for direct testing/access
     ports:
       - "21250:6666"
     depends_on:
-      - openaudio_api
-      - whisper_service
-      - livekit
+      openaudio_api:
+        condition: service_healthy
+      whisper_service:
+        condition: service_started
+      livekit:
+        condition: service_started
     networks:
       # Connect this service to our shared network
       - shared_services_network
@@ -96,6 +103,13 @@ services:
     volumes:
       - ../backend/openaudio-checkpoints:/app/checkpoints:ro
       - openaudio-references:/app/references
+    entrypoint: ["/app/.venv/bin/python", "-m", "tools.api_server"]
+    command: >
+      --listen 0.0.0.0:21251
+      --llama-checkpoint-path checkpoints/openaudio-s1-mini
+      --decoder-checkpoint-path checkpoints/openaudio-s1-mini/codec.pth
+      --decoder-config-name modded_dac_vq
+      --compile
     environment:
       - COMPILE=1
       - API_SERVER_NAME=0.0.0.0
@@ -126,19 +140,73 @@ services:
     volumes:
       - ./livekit.yaml:/etc/livekit.yaml:ro
     environment:
-      - LIVEKIT_KEYS=${LIVEKIT_API_KEY:-devkey}: ${LIVEKIT_API_SECRET:-secret}
+      # LiveKit expects `key: secret` (note the single space after the colon).
+      - "LIVEKIT_KEYS=${LIVEKIT_API_KEY:-devkey}: ${LIVEKIT_API_SECRET:-devsecretdevsecretdevsecretdevsecret}"
     networks:
       - shared_services_network
     ports:
       - "21254:7880"   # HTTP/WebSocket
-      - "21255:7881"   # RTC over TCP
-      - "21256:7882/udp"  # RTC over UDP
+      # IMPORTANT: these must be published on the same host ports that LiveKit advertises
+      # (see rtc.tcp_port/rtc.udp_port in livekit.yaml). Remapping breaks ICE.
+      - "7881:7881"    # RTC over TCP
+      - "7882:7882/udp"  # RTC over UDP
+      # UDP port range for ICE candidates (must match rtc.port_range_* in livekit.yaml)
+      - "50000-50100:50000-50100/udp"
     healthcheck:
       test: [ "CMD", "wget", "-q", "--spider", "http://localhost:7880" ]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 10s
+
+  livekit_agent_worker:
+    build:
+      context: ../backend
+      dockerfile: ../docker/Dockerfile
+    image: gemma-voice-api
+    container_name: livekit_agent_worker
+    restart: unless-stopped
+    init: true
+    command: ["python", "-m", "app.agents.worker", "dev"]
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [ gpu ]
+    volumes:
+      - ~/.cache/huggingface:/home/appuser/.cache/huggingface
+      - ~/.cache/whisper:/home/appuser/.cache/whisper
+    environment:
+      - HUGGING_FACE_HUB_TOKEN=${HUGGING_FACE_HUB_TOKEN:-}
+      - ENABLE_FASTER_WHISPER=false
+      - OPENAI_API_BASE=http://whisper_service:8000/v1
+      - OPENAI_API_KEY=dummy-key
+      - OPENAI_WHISPER_MODEL=${OPENAI_WHISPER_MODEL:-Systran/faster-whisper-small}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - OPENAUDIO_API_KEY=${OPENAUDIO_API_KEY:-}
+      - OPENAUDIO_API_BASE=${OPENAUDIO_API_BASE:-http://openaudio_api:21251}
+      - OPENAUDIO_TTS_PATH=${OPENAUDIO_TTS_PATH:-/v1/tts}
+      - OPENAUDIO_DEFAULT_FORMAT=${OPENAUDIO_DEFAULT_FORMAT:-wav}
+      - OPENAUDIO_DEFAULT_REFERENCE_ID=${OPENAUDIO_DEFAULT_REFERENCE_ID:-}
+      - OPENAUDIO_DEFAULT_NORMALIZE=${OPENAUDIO_DEFAULT_NORMALIZE:-true}
+      - OPENAUDIO_TIMEOUT_SECONDS=${OPENAUDIO_TIMEOUT_SECONDS:-120}
+      - OPENAUDIO_MAX_RETRIES=${OPENAUDIO_MAX_RETRIES:-3}
+      # Worker must use the INTERNAL LiveKit URL reachable from within the Docker network.
+      - LIVEKIT_URL=ws://livekit:7880
+      - LIVEKIT_API_KEY=${LIVEKIT_API_KEY:-devkey}
+      - LIVEKIT_API_SECRET=${LIVEKIT_API_SECRET:-devsecretdevsecretdevsecretdevsecret}
+      - LIVEKIT_ROOM_NAME=${LIVEKIT_ROOM_NAME:-gemma-voice-room}
+    depends_on:
+      openaudio_api:
+        condition: service_healthy
+      whisper_service:
+        condition: service_started
+      livekit:
+        condition: service_healthy
+    networks:
+      - shared_services_network
 
   frontend:
     build:

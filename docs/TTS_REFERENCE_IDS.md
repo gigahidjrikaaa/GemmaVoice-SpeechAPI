@@ -1,16 +1,19 @@
 # Text-to-Speech Reference IDs
 
 ## Overview
+
 The `reference_id` parameter in TTS requests allows you to specify different voice presets or voice cloning references. This parameter is optional and will use the default voice if not specified.
 
 ## Available Reference IDs
 
 ### Default Voice
+
 - **ID**: `default` or leave empty
 - **Description**: The base voice model without any specific reference
 - **Usage**: Best for general-purpose speech synthesis
 
 ### Custom Reference IDs
+
 Reference IDs can be any string identifier that you configure in your OpenAudio system. Common examples include:
 
 - `voice_1`, `voice_2`, `voice_3` - Numbered voice presets
@@ -21,6 +24,7 @@ Reference IDs can be any string identifier that you configure in your OpenAudio 
 ## Configuration
 
 The system default reference ID is configured via the environment variable:
+
 ```bash
 OPENAUDIO_DEFAULT_REFERENCE_ID=default
 ```
@@ -35,9 +39,10 @@ Instead of using pre-configured reference IDs, you can use **voice cloning** by 
 
 ## Example Usage
 
-### Using a Reference ID:
+### Using a Reference ID
+
 ```bash
-curl -X POST http://localhost:6666/v1/text-to-speech \
+curl -X POST http://localhost:21250/v1/text-to-speech \
   -H "Content-Type: application/json" \
   -d '{
     "text": "Hello! This is a test.",
@@ -46,9 +51,10 @@ curl -X POST http://localhost:6666/v1/text-to-speech \
   }'
 ```
 
-### Using Voice Cloning (No Reference ID):
+### Using Voice Cloning (No Reference ID)
+
 ```bash
-curl -X POST http://localhost:6666/v1/text-to-speech \
+curl -X POST http://localhost:21250/v1/text-to-speech \
   -H "Content-Type: application/json" \
   -d '{
     "text": "Hello! This is a test.",

@@ -4,15 +4,24 @@
 port: 7880
 rtc:
   port_range_start: 50000
-  port_range_end: 60000
+  port_range_end: 50100
   tcp_port: 7881
-  udp_port: 7882
+  # Note: do not set `udp_port` when `port_range_start/end` are set.
+  # `udp_port` enables UDP mux and requires port_range_* to be unset.
+
+  # For local Docker-on-desktop setups, advertising a public/stun-discovered IP can
+  # cause ICE connectivity failures. Prefer local interface IPs and also include
+  # loopback candidates so the browser can connect via published localhost ports.
   use_external_ip: false
+  enable_loopback_candidate: true
+
+  # Make the server more willing to fall back to TCP when UDP checks fail.
+  allow_tcp_fallback: true
 
 # API keys - override via LIVEKIT_KEYS environment variable
 # Format: "api_key: secret"
 keys:
-  devkey: secret
+  devkey: devsecretdevsecretdevsecretdevsecret
 
 # Logging
 logging:
@@ -25,10 +34,7 @@ room:
   empty_timeout: 300  # 5 minutes
   max_participants: 10
 
-# WebRTC settings
-webrtc:
-  # Enable simulcast for better quality adaptation
-  enable_loopback_candidate: true
+
 
 # Redis configuration (optional, for multi-node deployments)
 # redis:

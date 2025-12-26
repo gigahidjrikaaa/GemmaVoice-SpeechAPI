@@ -35,6 +35,7 @@ class LLMService:
         self._model_path: Optional[str] = None
         self._is_loading = False
         self._load_lock = asyncio.Lock()
+        self._inference_lock = asyncio.Lock()
 
     async def startup(self) -> None:
         """Download and load the configured model if required.
@@ -170,10 +171,11 @@ class LLMService:
         try:
             # Run generation in thread pool with timeout
             logger.debug("Calling llama.cpp with prompt length %d and params: %s", len(prompt), kwargs)
-            result = await asyncio.wait_for(
-                asyncio.to_thread(self._llm, prompt, **kwargs),
-                timeout=timeout,
-            )
+            async with self._inference_lock:
+                result = await asyncio.wait_for(
+                    asyncio.to_thread(self._llm, prompt, **kwargs),
+                    timeout=timeout,
+                )
             logger.debug("llama.cpp result: %s", result)
             return result
         except asyncio.TimeoutError as exc:
@@ -214,8 +216,9 @@ class LLMService:
         
         try:
             # Create async iterator from sync generator
-            async for chunk in self._stream_generator(prompt, **kwargs):
-                yield chunk
+            async with self._inference_lock:
+                async for chunk in self._stream_generator(prompt, **kwargs):
+                    yield chunk
         except asyncio.CancelledError:
             logger.info("Stream generation cancelled")
             raise StreamCancelledError("Generation stream was cancelled")

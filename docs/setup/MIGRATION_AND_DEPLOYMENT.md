@@ -17,20 +17,26 @@
 
 ### Overview
 
-Successfully migrated services to standardized port configuration:
+Successfully migrated services to standardized port configuration (21250+ range):
 
 | Service | Old Port | New Port | Description |
 |---------|----------|----------|-------------|
 | Gemma Service | 6666 | 21250 | LLM backend API |
 | OpenAudio Service | 8080 | 21251 | TTS REST API |
-| OpenAudio Web UI | - | 27860 | Official Gradio frontend |
-| Frontend Dev | 5173 | 5173-5174 | Vite dev server (auto-increment) |
+| Whisper Service | 8000 | 21252 | STT Service |
+| Frontend | 5173 | 21253 | React Web UI |
+| LiveKit API | - | 21254 | LiveKit HTTP API |
+| LiveKit TCP | - | 21255 | LiveKit RTC (TCP) |
+| LiveKit UDP | - | 21256 | LiveKit RTC (UDP) |
+
+> **Note**: The OpenAudio WebUI (previously on port 27860) has been removed.
 
 ### Changes Made
 
 #### 1. Frontend Configuration
 
 **`.env` and `.env.example`**
+
 ```bash
 # Updated configuration
 VITE_API_BASE_URL=http://localhost:21250
@@ -38,6 +44,7 @@ VITE_OPENAUDIO_BASE_URL=http://localhost:21251
 ```
 
 **`src/context/ConfigContext.tsx`**
+
 ```typescript
 // Updated default fallback
 const defaultConfig = {
@@ -48,6 +55,7 @@ const defaultConfig = {
 ```
 
 **`src/components/SettingsPanel.tsx`**
+
 ```typescript
 // Updated placeholder
 <input
@@ -61,6 +69,7 @@ const defaultConfig = {
 #### 2. Backend Services
 
 **`docker-compose.yml`**
+
 ```yaml
 services:
   gemma_service:
@@ -75,6 +84,7 @@ services:
 ```
 
 **`backend/app/config/settings.py`**
+
 ```python
 # Port configuration
 api_host: str = Field(default="0.0.0.0")
@@ -87,12 +97,14 @@ openaudio_api_base: str = Field(default="http://openaudio_api:21251")
 #### Gemma Service (Port 21250)
 
 **Health Check:**
+
 ```bash
 curl http://localhost:21250/health/live
 # Response: {"status": "alive"}
 ```
 
 **Text Generation:**
+
 ```bash
 curl -X POST http://localhost:21250/v1/generate \
   -H "Content-Type: application/json" \
@@ -104,6 +116,7 @@ curl -X POST http://localhost:21250/v1/generate \
 ```
 
 **Text-to-Speech (Proxied):**
+
 ```bash
 curl -X POST http://localhost:21250/v1/text-to-speech \
   -H "Content-Type: application/json" \
@@ -117,12 +130,14 @@ curl -X POST http://localhost:21250/v1/text-to-speech \
 #### OpenAudio Service (Port 21251)
 
 **Direct Health Check:**
+
 ```bash
 curl http://localhost:21251/v1/health
 # Response: {"status": "ok"}
 ```
 
 **Direct TTS Request:**
+
 ```bash
 curl -X POST http://localhost:21251/v1/tts \
   -H "Content-Type: application/json" \
@@ -139,12 +154,14 @@ curl -X POST http://localhost:21251/v1/tts \
 ### Issue 1: Gemma 3 Model Repository Access ❌ → ✅
 
 **Problem:**
+
 - Original config: `google/gemma-3-12b-it-qat-q4_0-gguf`
 - Error: `403 Forbidden` - Requires HuggingFace license acceptance
 - Impact: Backend fails to start, model cannot be downloaded
 
 **Solution:**
 Changed to unrestricted community mirror:
+
 ```python
 # backend/app/config/settings.py
 llm_repo_id: str = Field(
@@ -158,6 +175,7 @@ llm_model_filename: str = Field(
 ```
 
 **Model Details:**
+
 - Repository: [bartowski/google_gemma-3-12b-it-GGUF](https://huggingface.co/bartowski/google_gemma-3-12b-it-GGUF)
 - File: `google_gemma-3-12b-it-Q4_0.gguf` (6.91GB)
 - Quantization: Q4_0 (4-bit)
@@ -168,18 +186,21 @@ llm_model_filename: str = Field(
 ### Issue 2: OpenAudio Docker Image Tag ❌ → ✅
 
 **Problem:**
+
 - Original tag: `fishaudio/fish-speech:1.5.0`
 - Error: `docker.io/fishaudio/fish-speech:1.5.0: not found`
 - Impact: Docker Compose build fails, TTS unavailable
 
 **Root Cause:**
 Fish Speech project doesn't publish versioned tags like `1.5.0`. Available tags:
+
 - `latest` (stable, recommended)
 - `latest-dev` (development, unstable)
 - `server-cuda` (server variant)
 - `server-cuda-nightly` (nightly builds)
 
 **Solution:**
+
 ```yaml
 # docker/docker-compose.yml (before custom Dockerfile)
 openaudio_api:
@@ -189,6 +210,7 @@ openaudio_api:
 ```
 
 **Current Setup (Custom Dockerfile):**
+
 ```dockerfile
 # docker/openaudio.Dockerfile
 FROM fishaudio/fish-speech:latest
@@ -208,6 +230,7 @@ CMD ["python", "-m", "tools.api", \
 ### Issue 3: OpenAudio Checkpoint Configuration ✅
 
 **Required Files:**
+
 ```
 backend/openaudio-checkpoints/
 ├── codec.pth           # Audio codec model
@@ -218,6 +241,7 @@ backend/openaudio-checkpoints/
 ```
 
 **Verification:**
+
 ```bash
 ls -lh backend/openaudio-checkpoints/
 # Should show all 5 files with proper sizes
@@ -226,6 +250,7 @@ ls -lh backend/openaudio-checkpoints/
 ```
 
 **Download if missing:**
+
 ```bash
 cd backend
 python download_checkpoints.py
@@ -238,10 +263,11 @@ python download_checkpoints.py
 ### Environment Variables
 
 **Backend (`backend/.env`):**
+
 ```bash
 # API Configuration
 API_HOST=0.0.0.0
-API_PORT=6666
+API_PORT=8000
 API_KEY=your-secure-api-key-here
 
 # Model Configuration
@@ -260,6 +286,7 @@ DOCS_URL=/docs
 ```
 
 **Frontend (`frontend/.env`):**
+
 ```bash
 # API Endpoints
 VITE_API_BASE_URL=http://localhost:21250
@@ -275,27 +302,31 @@ VITE_API_KEY=your-api-key-here
 services:
   gemma_service:
     ports:
-      - "21250:6666"  # Host:Container
+      - "21250:8000"  # Host:Container
   
   openaudio_api:
     ports:
-      - "21251:21251"
+      - "21251:8000"
   
-  # Optional: Production frontend
+  whisper_service:
+    ports:
+      - "21252:8000"
+
   frontend:
     ports:
-      - "5173:80"
+      - "21253:80"
 ```
 
 ### CORS Configuration
 
 **Backend CORS settings:**
+
 ```python
 # backend/app/config/settings.py
 cors_origins: list[str] = Field(
     default=[
+        "http://localhost:21253",
         "http://localhost:5173",
-        "http://localhost:5174",
         "http://localhost:21250",
     ],
     description="Allowed CORS origins",
@@ -309,11 +340,13 @@ cors_origins: list[str] = Field(
 ### Port Already in Use
 
 **Symptom:**
+
 ```
 Error: bind: address already in use
 ```
 
 **Solution:**
+
 ```bash
 # Find process using port 21250
 lsof -i :21250  # Linux/macOS
@@ -327,18 +360,21 @@ taskkill /PID <PID> /F
 
 # Or change port in docker-compose.yml
 ports:
-  - "21260:6666"  # Use different host port
+  - "21260:8000"  # Use different host port
 ```
 
 ### Frontend Can't Connect to Backend
 
 **Symptom:**
+
 ```
 Network Error: Failed to fetch
 ```
 
 **Checks:**
+
 1. **Verify backend is running:**
+
    ```bash
    curl http://localhost:21250/health/live
    ```
@@ -352,6 +388,7 @@ Network Error: Failed to fetch
    - Verify request URL matches `VITE_API_BASE_URL`
 
 4. **Check frontend .env:**
+
    ```bash
    cat frontend/.env
    # Should contain: VITE_API_BASE_URL=http://localhost:21250
@@ -360,12 +397,15 @@ Network Error: Failed to fetch
 ### Model Download Fails
 
 **Symptom:**
+
 ```
 403 Forbidden: Access to model repository denied
 ```
 
 **Solution:**
+
 1. **Verify repository URL:**
+
    ```bash
    # Should be the community mirror
    curl -I https://huggingface.co/bartowski/google_gemma-3-12b-it-GGUF
@@ -373,12 +413,14 @@ Network Error: Failed to fetch
    ```
 
 2. **Check HuggingFace token (if needed):**
+
    ```bash
    # backend/.env
    HUGGINGFACE_TOKEN=your_token_here
    ```
 
 3. **Manual download:**
+
    ```bash
    cd backend
    huggingface-cli download bartowski/google_gemma-3-12b-it-GGUF \
@@ -389,15 +431,21 @@ Network Error: Failed to fetch
 ### OpenAudio Service Fails to Start
 
 **Symptom:**
+
 ```
 Error: Cannot load checkpoint from /app/checkpoints/...
 ```
 
 **Solutions:**
+
 1. **Verify checkpoints exist:**
+
    ```bash
+
   docker exec openaudio_api ls -la /app/checkpoints/OpenAudio-S1-mini/
-   # Should list 5 files
+
+# Should list 5 files
+
    ```
 
 2. **Re-download checkpoints:**
@@ -408,24 +456,30 @@ Error: Cannot load checkpoint from /app/checkpoints/...
    ```
 
 3. **Check disk space:**
+
    ```bash
    df -h
    # Ensure at least 10GB free
    ```
 
 4. **Rebuild container:**
+
    ```bash
    cd docker
    docker compose down
+
   docker compose build --no-cache openaudio_api
    docker compose up -d
+
    ```
 
 ### Docker Build Fails
 
 **Symptom:**
 ```
+
 Error: failed to solve: fishaudio/fish-speech:1.5.0: not found
+
 ```
 
 **Solution:**
@@ -435,6 +489,7 @@ FROM fishaudio/fish-speech:latest
 ```
 
 Then rebuild:
+
 ```bash
 docker compose build --pull openaudio_api
 docker compose up -d
@@ -453,7 +508,7 @@ docker compose up -d
 - [ ] Voice cloning works (if configured)
 - [ ] WebSocket connections work
 - [ ] CORS configured correctly
-- [ ] API documentation accessible at http://localhost:21250/docs
+- [ ] API documentation accessible at <http://localhost:21250/docs>
 
 ---
 

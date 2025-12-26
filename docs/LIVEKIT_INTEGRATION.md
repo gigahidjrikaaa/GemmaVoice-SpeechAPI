@@ -11,6 +11,7 @@ Phase 1 implements custom LiveKit plugins that wrap the existing services (Gemma
 ### 1. Custom Plugins (`backend/app/agents/plugins/`)
 
 #### `gemma_llm.py` - Custom LLM Plugin
+
 - **Class**: `GemmaLLM` (extends `llm.LLM`)
 - **Purpose**: Wraps the existing `LLMService` (llama.cpp) for LiveKit
 - **Features**:
@@ -20,6 +21,7 @@ Phase 1 implements custom LiveKit plugins that wrap the existing services (Gemma
   - Temperature, max_tokens configuration
 
 #### `openaudio_tts.py` - Custom TTS Plugin  
+
 - **Class**: `OpenAudioTTS` (extends `tts.TTS`)
 - **Purpose**: Wraps the existing `OpenAudioService` for LiveKit
 - **Features**:
@@ -29,6 +31,7 @@ Phase 1 implements custom LiveKit plugins that wrap the existing services (Gemma
   - Async streaming via `synthesize_stream()`
 
 #### `whisper_stt.py` - Custom STT Plugin
+
 - **Class**: `WhisperSTT` (extends `stt.STT`)
 - **Purpose**: Wraps the existing `WhisperService` for LiveKit
 - **Features**:
@@ -38,6 +41,7 @@ Phase 1 implements custom LiveKit plugins that wrap the existing services (Gemma
   - StreamAdapter pattern for VAD integration
 
 ### 2. Voice Agent (`backend/app/agents/voice_agent.py`)
+
 - **Class**: `GemmaVoiceAgent` (extends `Agent`)
 - **Purpose**: Orchestrates LLM, TTS, and STT for voice conversations
 - **Features**:
@@ -47,6 +51,7 @@ Phase 1 implements custom LiveKit plugins that wrap the existing services (Gemma
   - Factory function `create_agent_session()`
 
 ### 3. Worker Entry Point (`backend/app/agents/worker.py`)
+
 - **Purpose**: Standalone LiveKit worker process
 - **Usage**:
   ```bash
@@ -62,6 +67,7 @@ Phase 1 implements custom LiveKit plugins that wrap the existing services (Gemma
   - Graceful shutdown handling
 
 ### 4. Token Endpoint (`backend/app/api/v1/livekit.py`)
+
 - **Endpoints**:
   - `GET /v1/livekit/status` - Check if LiveKit is configured
   - `POST /v1/livekit/token` - Generate user access token
@@ -72,6 +78,7 @@ Phase 1 implements custom LiveKit plugins that wrap the existing services (Gemma
   - Room name and participant identity management
 
 ### 5. Configuration (`backend/app/config/settings.py`)
+
 New settings added:
 ```python
 livekit_url: Optional[str]         # LiveKit server WebSocket URL
@@ -84,6 +91,7 @@ livekit_token_ttl: int             # Token TTL in seconds (86400)
 ## Frontend Components Created
 
 ### 1. LiveKit Voice Chat (`frontend/src/components/LiveKitVoiceChat.tsx`)
+
 - **Purpose**: React component for LiveKit-based voice conversations
 - **Features**:
   - Connection status management
@@ -93,6 +101,7 @@ livekit_token_ttl: int             # Token TTL in seconds (86400)
   - Audio track rendering via `RoomAudioRenderer`
 
 ### 2. Mode Toggle (Updated `VoiceChatPanel.tsx`)
+
 - **Purpose**: Switch between WebSocket and LiveKit connection modes
 - **Features**:
   - Connection mode selector (WebSocket / LiveKit)
@@ -102,6 +111,7 @@ livekit_token_ttl: int             # Token TTL in seconds (86400)
 ## Dependencies Added
 
 ### Backend (`backend/requirements.txt`)
+
 ```
 livekit>=0.17.0
 livekit-agents>=0.12.0
@@ -109,6 +119,7 @@ livekit-plugins-silero>=0.7.0
 ```
 
 ### Frontend (`frontend/package.json`)
+
 ```json
 "@livekit/components-react": "^2.6.0",
 "livekit-client": "^2.6.0"

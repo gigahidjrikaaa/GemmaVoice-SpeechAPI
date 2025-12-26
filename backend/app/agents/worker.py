@@ -28,7 +28,6 @@ from livekit.agents import (
     cli,
     llm,
 )
-from livekit.agents.pipeline import VoicePipelineAgent
 
 from app.config.settings import get_settings
 from app.agents.voice_agent import GemmaVoiceAgent, ServiceFactory, create_agent_session
@@ -60,6 +59,10 @@ async def entrypoint(ctx: JobContext) -> None:
     Args:
         ctx: LiveKit job context with room information
     """
+    # Ensure the worker is connected to the room before interacting with participants.
+    # Without this, the agent may never join/subscribe correctly.
+    await ctx.connect(auto_subscribe=AutoSubscribe.AUDIO_ONLY)
+
     logger.info(
         "Starting agent job - Room: %s, Participant: %s",
         ctx.room.name,
@@ -83,11 +86,15 @@ async def entrypoint(ctx: JobContext) -> None:
     language = job_metadata.get("language", None)
     
     # Create agent for this session
-    agent = factory.create_agent(
-        instructions=instructions or None,
-        reference_id=reference_id,
-        language=language,
-    )
+    agent_kwargs = {
+        "reference_id": reference_id,
+        "language": language,
+    }
+    # Only pass optional fields when present; the factory/agent expect instructions as a string.
+    if isinstance(instructions, str) and instructions.strip():
+        agent_kwargs["instructions"] = instructions
+
+    agent = factory.create_agent(**agent_kwargs)
     
     # Start agent session
     try:

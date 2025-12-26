@@ -1,14 +1,27 @@
-import { ChangeEvent, FormEvent, useRef, useState, useEffect } from "react";
-import { useMutation } from "@tanstack/react-query";
+import { ChangeEvent, FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { useClientConfig } from "../context/ConfigContext";
 import { useCode } from "../context/CodeContext";
-import { apiFetch, type ApiError } from "../lib/apiClient";
-import { fileToBase64 } from "../lib/audioUtils";
+import { apiFetch } from "../lib/api";
 import { useToast } from "./Toast";
 import { InstructionsPanel } from "./InstructionsPanel";
 import { FAQSection, type FAQItem } from "./FAQSection";
 import { AudioVisualizer } from "./AudioVisualizer";
-import { Mic, Upload, Radio, FileAudio, X, CheckCircle2, Zap } from "lucide-react";
+import { errorLogger } from "../lib/error";
+import { 
+  Mic, 
+  Upload, 
+  Radio, 
+  FileAudio, 
+  X, 
+  Zap, 
+  BookOpen, 
+  Settings2, 
+  ChevronDown, 
+  ChevronUp,
+  Clock,
+  Languages,
+  FileText
+} from "lucide-react";
 
 type TranscriptionResponse = {
   text: string;
@@ -25,12 +38,6 @@ const defaultOptions = {
   model: "whisper-large-v3-turbo",
   responseFormat: "json",
   temperature: 0
-};
-
-const PARAM_HELP = {
-  model: "The Whisper model to use. 'large-v3-turbo' is recommended for best accuracy/speed balance.",
-  responseFormat: "Output format. 'json' gives full details, 'text' gives just the transcript, 'verbose_json' includes segments.",
-  temperature: "Sampling temperature (0-1). 0 is most deterministic and accurate. Higher values add variety but may hallucinate."
 };
 
 // FAQ items for speech-to-text
@@ -103,6 +110,14 @@ export function TranscriptionPanel() {
   const [audioFile, setAudioFile] = useState<File | null>(null);
   const [recordingDuration, setRecordingDuration] = useState(0);
   const [wsStatus, setWsStatus] = useState<"disconnected" | "connecting" | "connected">("disconnected");
+  const [showGuide, setShowGuide] = useState(false);
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [isTranscribing, setIsTranscribing] = useState(false);
+  const [audioInputs, setAudioInputs] = useState<MediaDeviceInfo[]>([]);
+  const [audioOutputs, setAudioOutputs] = useState<MediaDeviceInfo[]>([]);
+  const [selectedInputDeviceId, setSelectedInputDeviceId] = useState<string>("default");
+  const [selectedOutputDeviceId, setSelectedOutputDeviceId] = useState<string>("default");
+  const [recordingPreviewUrl, setRecordingPreviewUrl] = useState<string | null>(null);
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
@@ -110,8 +125,27 @@ export function TranscriptionPanel() {
   const audioChunksRef = useRef<Blob[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const timerRef = useRef<number>();
+  const previewAudioRef = useRef<HTMLAudioElement | null>(null);
+
+  const supportsSetSinkId =
+    typeof window !== "undefined" &&
+    typeof (HTMLMediaElement.prototype as unknown as { setSinkId?: unknown }).setSinkId === "function";
+
+  const refreshDevices = useCallback(async () => {
+    try {
+      if (!navigator.mediaDevices?.enumerateDevices) return;
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      setAudioInputs(devices.filter((d) => d.kind === "audioinput"));
+      setAudioOutputs(devices.filter((d) => d.kind === "audiooutput"));
+    } catch (error) {
+      console.warn("Failed to enumerate media devices", error);
+    }
+  }, []);
 
   useEffect(() => {
+    refreshDevices();
+    const mediaDevices = navigator.mediaDevices;
+    mediaDevices?.addEventListener?.("devicechange", refreshDevices);
     return () => {
       if (streamRef.current) {
         streamRef.current.getTracks().forEach(track => track.stop());
@@ -122,8 +156,32 @@ export function TranscriptionPanel() {
       if (timerRef.current) {
         clearInterval(timerRef.current);
       }
+      mediaDevices?.removeEventListener?.("devicechange", refreshDevices);
     };
-  }, []);
+  }, [refreshDevices]);
+
+  useEffect(() => {
+    return () => {
+      if (recordingPreviewUrl) {
+        URL.revokeObjectURL(recordingPreviewUrl);
+      }
+    };
+  }, [recordingPreviewUrl]);
+
+  useEffect(() => {
+    if (!supportsSetSinkId) return;
+    if (!previewAudioRef.current) return;
+    if (!recordingPreviewUrl) return;
+
+    const el = previewAudioRef.current as HTMLAudioElement & { setSinkId?: (sinkId: string) => Promise<void> };
+    if (!el.setSinkId) return;
+
+    const sinkId = selectedOutputDeviceId;
+    if (!sinkId || sinkId === "default") return;
+    el.setSinkId(sinkId).catch((error) => {
+      console.warn("Failed to set output device", error);
+    });
+  }, [recordingPreviewUrl, selectedOutputDeviceId, supportsSetSinkId]);
 
   // Update code snippet based on mode
   useEffect(() => {
@@ -190,48 +248,32 @@ ws.send(JSON.stringify({ event: "stop" }));`;
     }
   }, [isLiveMode, options, config.baseUrl, setSnippet]);
 
-  const mutation = useMutation<TranscriptionResponse, ApiError, FormData>({
-    mutationFn: async (formData) => {
+  const handleTranscription = async (formData: FormData) => {
+    setIsTranscribing(true);
+    try {
       const { data } = await apiFetch<TranscriptionResponse>(config, "/v1/speech-to-text", {
         method: "POST",
         body: formData,
       });
-      return data;
-    },
-    onSuccess: (data) => {
       setResult(data);
       push({ title: "Transcription complete" });
-    },
-    onError: (error) => {
-      // Properly extract and stringify error message from API error object
-      let message = 'Unknown error';
-
-      if (typeof error === 'string') {
-        message = error;
-      } else if (error && typeof error === 'object') {
-        // Cast to any since API errors can have various shapes
-        const err = error as any;
-        const errorMsg = err.error || err.detail || err.message;
-
-        if (typeof errorMsg === 'string') {
-          message = errorMsg;
-        } else if (errorMsg && typeof errorMsg === 'object') {
-          // Handle Pydantic validation errors which have nested objects
-          if (Array.isArray(errorMsg)) {
-            message = errorMsg.map((e: any) => e.msg || JSON.stringify(e)).join('; ');
-          } else {
-            message = JSON.stringify(errorMsg);
-          }
-        }
-      }
-
-      push({ title: "Transcription failed", description: message, variant: "error" });
+    } catch (error) {
+      errorLogger.logError(error, '/v1/speech-to-text');
+      const userMessage = errorLogger.getUserFriendlyMessage(error);
+      push({ title: "Transcription failed", description: userMessage, variant: "error" });
+    } finally {
+      setIsTranscribing(false);
     }
-  });
+  };
 
   const startRecording = async () => {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const audioConstraints: MediaTrackConstraints | boolean =
+        selectedInputDeviceId && selectedInputDeviceId !== "default"
+          ? { deviceId: { exact: selectedInputDeviceId } }
+          : true;
+
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints });
       streamRef.current = stream;
       
       // Check for supported MIME types
@@ -247,6 +289,10 @@ ws.send(JSON.stringify({ event: "stop" }));`;
       setResult(null);
       setInterimResult("");
       setRecordingDuration(0);
+      setRecordingPreviewUrl((prev) => {
+        if (prev) URL.revokeObjectURL(prev);
+        return null;
+      });
 
       // Start timer
       timerRef.current = window.setInterval(() => {
@@ -278,7 +324,6 @@ ws.send(JSON.stringify({ event: "stop" }));`;
         ws.onmessage = (event) => {
           try {
             const msg = JSON.parse(event.data);
-            console.log("WebSocket message:", msg);
             
             if (msg.event === "interim" && msg.data) {
               // Show interim (partial) results in real-time
@@ -335,14 +380,20 @@ ws.send(JSON.stringify({ event: "stop" }));`;
         };
 
         mediaRecorder.onstop = () => {
-          const audioBlob = new Blob(audioChunksRef.current, { type: "audio/webm" });
-          const file = new File([audioBlob], "recording.webm", { type: "audio/webm" });
+          const fileType = mimeType.includes("webm") ? "audio/webm" : mimeType.includes("mp4") ? "audio/mp4" : "audio/webm";
+          const fileExt = fileType.includes("mp4") ? "mp4" : "webm";
+          const audioBlob = new Blob(audioChunksRef.current, { type: fileType });
+          setRecordingPreviewUrl((prev) => {
+            if (prev) URL.revokeObjectURL(prev);
+            return URL.createObjectURL(audioBlob);
+          });
+          const file = new File([audioBlob], `recording.${fileExt}`, { type: fileType });
           const formData = new FormData();
           formData.append("file", file);
           formData.append("model", options.model);
           formData.append("response_format", options.responseFormat);
           formData.append("temperature", String(options.temperature));
-          mutation.mutate(formData);
+          handleTranscription(formData);
         };
 
         mediaRecorder.start();
@@ -406,7 +457,7 @@ ws.send(JSON.stringify({ event: "stop" }));`;
     formData.append("response_format", options.responseFormat);
     formData.append("temperature", String(options.temperature));
 
-    mutation.mutate(formData);
+    handleTranscription(formData);
   };
 
   const formatTime = (seconds: number) => {
@@ -416,54 +467,79 @@ ws.send(JSON.stringify({ event: "stop" }));`;
   };
 
   return (
-    <div className="flex flex-col gap-6">
-      <InstructionsPanel
-        title="🎤 Speech-to-Text with Whisper"
-        description="Convert audio to text using OpenAI's Whisper model. Choose from file upload, manual recording, or live streaming transcription."
-        steps={[
-          {
-            step: 1,
-            title: "Choose Input Method",
-            description: "Upload an audio file or use your microphone for live recording.",
-          },
-          {
-            step: 2,
-            title: "Select Mode",
-            description: "Standard mode records then transcribes. Live Streaming transcribes in real-time.",
-          },
-          {
-            step: 3,
-            title: "Transcribe",
-            description: "Click start to begin. Results will appear automatically.",
-          }
-        ]}
-        tips={[
-          "Supported formats: mp3, mp4, mpeg, mpga, m4a, wav, webm",
-          "File size limit: 25MB",
-          "For long audio, standard mode is more reliable than streaming",
-          "Live streaming requires a stable internet connection"
-        ]}
-        troubleshooting={[
-          {
-            problem: "Microphone not working",
-            solution: "Check browser permissions and ensure microphone is selected in system settings",
-          },
-          {
-            problem: "Transcription is inaccurate",
-            solution: "Try speaking closer to the mic or reduce background noise. Lower temperature to 0.",
-          }
-        ]}
-      />
+    <div className="flex flex-col gap-6 h-full">
+      {/* Header Section */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-2xl font-bold text-slate-100">Speech to Text</h2>
+          <p className="text-slate-400 text-sm">Convert audio to text using OpenAI's Whisper model</p>
+        </div>
+        <button
+          onClick={() => setShowGuide(!showGuide)}
+          className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+            showGuide 
+              ? "bg-emerald-500/10 text-emerald-400" 
+              : "bg-slate-900 text-slate-400 hover:text-slate-200"
+          }`}
+        >
+          <BookOpen className="h-4 w-4" />
+          {showGuide ? "Hide Guide" : "Show Guide"}
+        </button>
+      </div>
 
-      <div className="grid gap-6 lg:grid-cols-3">
-        <div className="lg:col-span-2 flex flex-col gap-6">
-          {/* Recording Section */}
-          <div className="rounded-xl border border-slate-800 bg-slate-900/50 p-6">
-            <div className="flex items-center justify-between mb-6">
-              <h3 className="text-sm font-semibold text-slate-200 flex items-center gap-2">
-                <Mic className="h-4 w-4 text-emerald-400" />
-                Microphone Input
-              </h3>
+      {/* Instructions Panel (Collapsible) */}
+      {showGuide && (
+        <div className="animate-in fade-in slide-in-from-top-4 duration-300">
+          <InstructionsPanel
+            title="🎤 Speech-to-Text Guide"
+            description="Convert audio to text using OpenAI's Whisper model. Choose from file upload, manual recording, or live streaming transcription."
+            steps={[
+              {
+                step: 1,
+                title: "Choose Input Method",
+                description: "Upload an audio file or use your microphone for live recording.",
+              },
+              {
+                step: 2,
+                title: "Select Mode",
+                description: "Standard mode records then transcribes. Live Streaming transcribes in real-time.",
+              },
+              {
+                step: 3,
+                title: "Transcribe",
+                description: "Click start to begin. Results will appear automatically.",
+              }
+            ]}
+            tips={[
+              "Supported formats: mp3, mp4, mpeg, mpga, m4a, wav, webm",
+              "File size limit: 25MB",
+              "For long audio, standard mode is more reliable than streaming",
+              "Live streaming requires a stable internet connection"
+            ]}
+            troubleshooting={[
+              {
+                problem: "Microphone not working",
+                solution: "Check browser permissions and ensure microphone is selected in system settings",
+              },
+              {
+                problem: "Transcription is inaccurate",
+                solution: "Try speaking closer to the mic or reduce background noise. Lower temperature to 0.",
+              }
+            ]}
+          />
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 h-full min-h-0">
+        {/* Left Column: Inputs */}
+        <div className="lg:col-span-5 flex flex-col gap-6 overflow-y-auto pr-2">
+          {/* Recording Card */}
+          <div className="rounded-xl border border-slate-800 bg-slate-900/30 overflow-hidden">
+            <div className="p-4 border-b border-slate-800 bg-slate-900/50 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Mic className="h-4 w-4 text-emerald-500" />
+                <h3 className="font-medium text-slate-200">Microphone Input</h3>
+              </div>
               <label className="flex items-center gap-2 text-xs font-medium text-slate-400 cursor-pointer hover:text-emerald-400 transition-colors">
                 <input
                   type="checkbox"
@@ -477,7 +553,45 @@ ws.send(JSON.stringify({ event: "stop" }));`;
               </label>
             </div>
 
-            <div className="flex flex-col items-center gap-6">
+            <div className="p-6 flex flex-col items-center gap-6">
+              <div className="w-full grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-[10px] font-medium text-slate-500 uppercase tracking-wider">Input Device</label>
+                  <select
+                    className="rounded bg-slate-900 border border-slate-800 px-2 py-1.5 text-xs text-slate-300 focus:border-emerald-500/50 focus:outline-none"
+                    value={selectedInputDeviceId}
+                    onChange={(e) => setSelectedInputDeviceId(e.target.value)}
+                    disabled={isRecording}
+                  >
+                    <option value="default">Default</option>
+                    {audioInputs.map((device, index) => (
+                      <option key={device.deviceId} value={device.deviceId}>
+                        {device.label || `Microphone ${index + 1}`}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-[10px] font-medium text-slate-500 uppercase tracking-wider">Output Device (preview)</label>
+                  <select
+                    className="rounded bg-slate-900 border border-slate-800 px-2 py-1.5 text-xs text-slate-300 focus:border-emerald-500/50 focus:outline-none disabled:opacity-50"
+                    value={selectedOutputDeviceId}
+                    onChange={(e) => setSelectedOutputDeviceId(e.target.value)}
+                    disabled={isRecording || !supportsSetSinkId}
+                  >
+                    <option value="default">Default</option>
+                    {audioOutputs.map((device, index) => (
+                      <option key={device.deviceId} value={device.deviceId}>
+                        {device.label || `Speaker ${index + 1}`}
+                      </option>
+                    ))}
+                  </select>
+                  {!supportsSetSinkId && (
+                    <p className="text-[10px] text-slate-500">Output selection not supported in this browser.</p>
+                  )}
+                </div>
+              </div>
+
               {isRecording ? (
                 <div className="w-full">
                   <AudioVisualizer stream={streamRef.current} className="w-full h-32 rounded-lg border border-emerald-500/20 bg-slate-950/50" />
@@ -529,6 +643,11 @@ ws.send(JSON.stringify({ event: "stop" }));`;
                   </>
                 ) : (
                   <>
+              ) : recordingPreviewUrl ? (
+                <div className="w-full space-y-3">
+                  <audio ref={previewAudioRef} controls className="w-full" src={recordingPreviewUrl ?? undefined} />
+                  <p className="text-[10px] text-slate-500">Preview uses selected output device (if supported).</p>
+                </div>
                     <Mic className="h-5 w-5" />
                     Start Recording
                   </>
@@ -537,188 +656,223 @@ ws.send(JSON.stringify({ event: "stop" }));`;
             </div>
           </div>
 
-          {/* File Upload Section */}
-          <div className="rounded-xl border border-slate-800 bg-slate-900/50 p-6">
-            <h3 className="text-sm font-semibold text-slate-200 flex items-center gap-2 mb-4">
-              <Upload className="h-4 w-4 text-emerald-400" />
-              File Upload
-            </h3>
+          {/* File Upload Card */}
+          <div className="rounded-xl border border-slate-800 bg-slate-900/30 overflow-hidden">
+            <div className="p-4 border-b border-slate-800 bg-slate-900/50 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Upload className="h-4 w-4 text-emerald-500" />
+                <h3 className="font-medium text-slate-200">File Upload</h3>
+              </div>
+            </div>
 
-            <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-              <div className="relative">
-                <input
-                  type="file"
-                  accept="audio/*"
-                  ref={fileInputRef}
-                  onChange={handleFileChange}
-                  className="hidden"
-                  id="audio-upload"
-                />
-                <label
-                  htmlFor="audio-upload"
-                  className={`flex flex-col items-center justify-center w-full h-32 rounded-lg border-2 border-dashed transition-colors cursor-pointer ${audioFile
-                    ? "border-emerald-500/50 bg-emerald-500/5"
-                    : "border-slate-800 hover:border-slate-700 bg-slate-950/30 hover:bg-slate-900/50"
-                    }`}
-                >
-                  {audioFile ? (
-                    <div className="flex flex-col items-center gap-2 text-emerald-400">
-                      <FileAudio className="h-8 w-8" />
-                      <span className="text-sm font-medium">{audioFile.name}</span>
-                      <span className="text-xs opacity-70">{(audioFile.size / 1024 / 1024).toFixed(2)} MB</span>
+            <div className="p-4 space-y-4">
+              <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+                <div className="relative">
+                  <input
+                    type="file"
+                    accept="audio/*"
+                    ref={fileInputRef}
+                    onChange={handleFileChange}
+                    className="hidden"
+                    id="audio-upload"
+                  />
+                  <label
+                    htmlFor="audio-upload"
+                    className={`flex flex-col items-center justify-center w-full h-32 rounded-lg border-2 border-dashed transition-colors cursor-pointer ${audioFile
+                      ? "border-emerald-500/50 bg-emerald-500/5"
+                      : "border-slate-800 hover:border-slate-700 bg-slate-900/50 hover:bg-slate-900"
+                      }`}
+                  >
+                    {audioFile ? (
+                      <div className="flex flex-col items-center gap-2 text-emerald-400">
+                        <FileAudio className="h-8 w-8" />
+                        <span className="text-sm font-medium">{audioFile.name}</span>
+                        <span className="text-xs opacity-70">{(audioFile.size / 1024 / 1024).toFixed(2)} MB</span>
+                      </div>
+                    ) : (
+                      <div className="flex flex-col items-center gap-2 text-slate-500">
+                        <Upload className="h-8 w-8 opacity-50" />
+                        <span className="text-sm">Click to upload or drag and drop</span>
+                        <span className="text-xs opacity-50">MP3, WAV, M4A up to 25MB</span>
+                      </div>
+                    )}
+                  </label>
+                  {audioFile && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        setAudioFile(null);
+                        if (fileInputRef.current) fileInputRef.current.value = "";
+                      }}
+                      className="absolute top-2 right-2 p-1 rounded-full bg-slate-900/80 text-slate-400 hover:text-red-400 transition-colors"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  )}
+                </div>
+
+                {/* Collapsible Settings */}
+                <div className="border border-slate-800 rounded-lg overflow-hidden">
+                  <button 
+                    type="button"
+                    onClick={() => setShowAdvanced(!showAdvanced)}
+                    className="w-full p-3 bg-slate-900/50 flex items-center justify-between hover:bg-slate-900 transition-colors"
+                  >
+                    <div className="flex items-center gap-2">
+                      <Settings2 className="h-3 w-3 text-slate-400" />
+                      <span className="text-xs font-medium text-slate-400">Transcription Settings</span>
                     </div>
-                  ) : (
-                    <div className="flex flex-col items-center gap-2 text-slate-500">
-                      <Upload className="h-8 w-8 opacity-50" />
-                      <span className="text-sm">Click to upload or drag and drop</span>
-                      <span className="text-xs opacity-50">MP3, WAV, M4A up to 25MB</span>
+                    {showAdvanced ? (
+                      <ChevronUp className="h-3 w-3 text-slate-400" />
+                    ) : (
+                      <ChevronDown className="h-3 w-3 text-slate-400" />
+                    )}
+                  </button>
+                  
+                  {showAdvanced && (
+                    <div className="p-3 border-t border-slate-800 grid grid-cols-1 sm:grid-cols-2 gap-3 bg-slate-950/30">
+                      <div className="flex flex-col gap-1.5">
+                        <label className="text-[10px] font-medium text-slate-500 uppercase tracking-wider">Model</label>
+                        <select
+                          className="rounded bg-slate-900 border border-slate-800 px-2 py-1.5 text-xs text-slate-300 focus:border-emerald-500/50 focus:outline-none"
+                          value={options.model}
+                          onChange={(e) => setOptions(prev => ({ ...prev, model: e.target.value }))}
+                        >
+                          <option value="whisper-large-v3-turbo">Large V3 Turbo</option>
+                          <option value="whisper-large-v3">Large V3</option>
+                          <option value="distil-whisper-large-v3">Distil Large V3</option>
+                        </select>
+                      </div>
+                      <div className="flex flex-col gap-1.5">
+                        <label className="text-[10px] font-medium text-slate-500 uppercase tracking-wider">Format</label>
+                        <select
+                          className="rounded bg-slate-900 border border-slate-800 px-2 py-1.5 text-xs text-slate-300 focus:border-emerald-500/50 focus:outline-none"
+                          value={options.responseFormat}
+                          onChange={(e) => setOptions(prev => ({ ...prev, responseFormat: e.target.value }))}
+                        >
+                          <option value="json">JSON</option>
+                          <option value="text">Text</option>
+                          <option value="verbose_json">Verbose JSON</option>
+                        </select>
+                      </div>
+                      <div className="flex flex-col gap-1.5 sm:col-span-2">
+                        <label className="text-[10px] font-medium text-slate-500 uppercase tracking-wider flex justify-between">
+                          Temperature
+                          <span className="text-emerald-500">{options.temperature}</span>
+                        </label>
+                        <input
+                          type="range"
+                          min="0"
+                          max="1"
+                          step="0.1"
+                          className="w-full accent-emerald-500 h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer"
+                          value={options.temperature}
+                          onChange={(e) => setOptions(prev => ({ ...prev, temperature: Number(e.target.value) }))}
+                        />
+                      </div>
                     </div>
                   )}
-                </label>
-                {audioFile && (
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.preventDefault();
-                      setAudioFile(null);
-                      if (fileInputRef.current) fileInputRef.current.value = "";
-                    }}
-                    className="absolute top-2 right-2 p-1 rounded-full bg-slate-900/80 text-slate-400 hover:text-red-400 transition-colors"
-                  >
-                    <X className="h-4 w-4" />
-                  </button>
-                )}
-              </div>
+                </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                <div className="flex flex-col gap-2">
-                  <label className="text-xs font-medium text-slate-400 flex items-center gap-1">
-                    Model
-                    <span className="cursor-help opacity-50 hover:opacity-100 transition-opacity" title={PARAM_HELP.model}>ℹ️</span>
-                  </label>
-                  <select
-                    className="rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-sm focus:border-emerald-500/50 focus:outline-none"
-                    value={options.model}
-                    onChange={(e) => setOptions(prev => ({ ...prev, model: e.target.value }))}
-                  >
-                    <option value="whisper-large-v3-turbo">Large V3 Turbo</option>
-                    <option value="whisper-large-v3">Large V3</option>
-                    <option value="distil-whisper-large-v3">Distil Large V3</option>
-                  </select>
-                </div>
-                <div className="flex flex-col gap-2">
-                  <label className="text-xs font-medium text-slate-400 flex items-center gap-1">
-                    Format
-                    <span className="cursor-help opacity-50 hover:opacity-100 transition-opacity" title={PARAM_HELP.responseFormat}>ℹ️</span>
-                  </label>
-                  <select
-                    className="rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-sm focus:border-emerald-500/50 focus:outline-none"
-                    value={options.responseFormat}
-                    onChange={(e) => setOptions(prev => ({ ...prev, responseFormat: e.target.value }))}
-                  >
-                    <option value="json">JSON</option>
-                    <option value="text">Text</option>
-                    <option value="verbose_json">Verbose JSON</option>
-                  </select>
-                </div>
-                <div className="flex flex-col gap-2">
-                  <label className="text-xs font-medium text-slate-400 flex items-center gap-1">
-                    Temperature
-                    <span className="cursor-help opacity-50 hover:opacity-100 transition-opacity" title={PARAM_HELP.temperature}>ℹ️</span>
-                  </label>
-                  <input
-                    type="number"
-                    step="0.1"
-                    min="0"
-                    max="1"
-                    className="rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-sm focus:border-emerald-500/50 focus:outline-none"
-                    value={options.temperature}
-                    onChange={(e) => setOptions(prev => ({ ...prev, temperature: Number(e.target.value) }))}
-                  />
-                </div>
-              </div>
-
-              <button
-                type="submit"
-                disabled={!audioFile || mutation.isPending}
-                className="w-full rounded-lg bg-emerald-500 px-4 py-3 text-sm font-semibold text-slate-950 hover:bg-emerald-400 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-              >
-                {mutation.isPending ? (
-                  <>
-                    <div className="h-4 w-4 rounded-full border-2 border-slate-950 border-t-transparent animate-spin" />
-                    Transcribing...
-                  </>
-                ) : (
-                  <>
-                    <Upload className="h-4 w-4" />
-                    Transcribe File
-                  </>
-                )}
-              </button>
-            </form>
+                <button
+                  type="submit"
+                  disabled={!audioFile || isTranscribing}
+                  className="w-full rounded-lg bg-emerald-500 px-4 py-3 text-sm font-semibold text-slate-950 hover:bg-emerald-400 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 shadow-lg shadow-emerald-500/20"
+                >
+                  {isTranscribing ? (
+                    <>
+                      <div className="h-4 w-4 rounded-full border-2 border-slate-950 border-t-transparent animate-spin" />
+                      Transcribing...
+                    </>
+                  ) : (
+                    <>
+                      <Upload className="h-4 w-4" />
+                      Transcribe File
+                    </>
+                  )}
+                </button>
+              </form>
+            </div>
           </div>
         </div>
 
-        {/* Results Section */}
-        <div className="flex flex-col gap-4">
-          {result ? (
-            <div className="flex-1 rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-4 animate-in fade-in slide-in-from-bottom-4 duration-500">
-              <div className="flex items-center gap-2 mb-4 pb-4 border-b border-emerald-500/10">
-                <CheckCircle2 className="h-5 w-5 text-emerald-400" />
-                <h3 className="text-sm font-semibold text-emerald-300">Transcription Result</h3>
+        {/* Right Column: Results */}
+        <div className="lg:col-span-7 flex flex-col gap-6 h-full">
+          <div className="flex-1 rounded-xl border border-slate-800 bg-slate-900/20 p-6 flex flex-col relative overflow-hidden">
+            <div className="absolute inset-0 bg-gradient-to-b from-slate-900/0 to-slate-900/50 pointer-events-none" />
+            
+            <div className="flex items-center justify-between mb-6 relative z-10">
+              <div className="flex items-center gap-2">
+                <FileText className="h-4 w-4 text-emerald-500" />
+                <h3 className="font-medium text-slate-200">Transcription Result</h3>
               </div>
-
-              <div className="space-y-4">
-                <div>
-                  <h4 className="text-xs font-medium text-emerald-500/70 uppercase tracking-wider mb-2">Transcript</h4>
-                  <p className="text-sm leading-relaxed text-slate-200 whitespace-pre-wrap">{result.text}</p>
-                </div>
-
-                {result.language && (
-                  <div className="flex items-center gap-2 text-xs text-slate-400">
-                    <span className="uppercase tracking-wider">Detected Language:</span>
-                    <span className="text-emerald-400 font-medium">{result.language}</span>
-                  </div>
-                )}
-
-                {result.segments && (
-                  <div>
-                    <h4 className="text-xs font-medium text-emerald-500/70 uppercase tracking-wider mb-2">Segments</h4>
-                    <div className="space-y-2 max-h-[300px] overflow-y-auto pr-2">
-                      {result.segments.map((segment, i) => (
-                        <div key={i} className="flex gap-3 text-xs p-2 rounded bg-slate-950/30 border border-slate-800/50">
-                          <span className="font-mono text-slate-500 shrink-0">
-                            {segment.start.toFixed(1)}s - {segment.end.toFixed(1)}s
-                          </span>
-                          <span className="text-slate-300">{segment.text}</span>
-                        </div>
-                      ))}
+              {result && (
+                <div className="flex items-center gap-3">
+                  {result.language && (
+                    <div className="flex items-center gap-1.5 px-2 py-1 rounded bg-slate-900 border border-slate-800">
+                      <Languages className="h-3 w-3 text-slate-400" />
+                      <span className="text-xs font-medium text-emerald-400 uppercase">{result.language}</span>
                     </div>
-                  </div>
-                )}
-              </div>
-            </div>
-          ) : (
-            <div className="flex-1 rounded-xl border border-slate-800 bg-slate-900/20 p-8 flex flex-col items-center justify-center text-center gap-3 min-h-[300px]">
-              <div className="h-12 w-12 rounded-full bg-slate-800/50 flex items-center justify-center">
-                {isRecording && isLiveMode ? (
-                  <Zap className="h-6 w-6 text-yellow-400 animate-pulse" />
-                ) : (
-                  <FileAudio className="h-6 w-6 text-slate-600" />
-                )}
-              </div>
-              <p className="text-sm text-slate-500">
-                {isRecording && isLiveMode 
-                  ? "Streaming transcription in progress..." 
-                  : isRecording 
-                    ? "Listening..." 
-                    : "Transcription results will appear here"}
-              </p>
-              {isRecording && isLiveMode && interimResult && (
-                <p className="text-sm text-yellow-400 italic mt-2">"{interimResult}"</p>
+                  )}
+                  {result.duration && (
+                    <div className="flex items-center gap-1.5 px-2 py-1 rounded bg-slate-900 border border-slate-800">
+                      <Clock className="h-3 w-3 text-slate-400" />
+                      <span className="text-xs font-medium text-slate-300">{result.duration.toFixed(1)}s</span>
+                    </div>
+                  )}
+                </div>
               )}
             </div>
-          )}
+
+            <div className="flex-1 overflow-y-auto relative z-10">
+              {result ? (
+                <div className="space-y-6">
+                  <div>
+                    <p className="text-slate-300 leading-relaxed whitespace-pre-wrap font-sans text-lg">
+                      {result.text}
+                    </p>
+                  </div>
+
+                  {result.segments && result.segments.length > 0 && (
+                    <div className="border-t border-slate-800 pt-6">
+                      <h4 className="text-xs font-medium text-slate-500 uppercase tracking-wider mb-4">Detailed Segments</h4>
+                      <div className="space-y-2">
+                        {result.segments.map((segment, i) => (
+                          <div key={i} className="flex gap-4 p-3 rounded-lg hover:bg-slate-900/50 transition-colors border border-transparent hover:border-slate-800">
+                            <span className="font-mono text-xs text-emerald-500/70 shrink-0 pt-1">
+                              {segment.start.toFixed(1)}s
+                            </span>
+                            <p className="text-sm text-slate-400">{segment.text}</p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="h-full flex flex-col items-center justify-center text-center gap-3 opacity-50 min-h-[300px]">
+                  <div className="h-12 w-12 rounded-full bg-slate-900 flex items-center justify-center border border-slate-800">
+                    {isRecording && isLiveMode ? (
+                      <Zap className="h-6 w-6 text-yellow-400 animate-pulse" />
+                    ) : (
+                      <FileText className="h-6 w-6 text-slate-600" />
+                    )}
+                  </div>
+                  <p className="text-sm text-slate-500">
+                    {isRecording && isLiveMode 
+                      ? "Streaming transcription in progress..." 
+                      : isRecording 
+                        ? "Listening..." 
+                        : "Transcription results will appear here"}
+                  </p>
+                  {isRecording && isLiveMode && interimResult && (
+                    <p className="text-sm text-yellow-400 italic mt-2 max-w-md">"{interimResult}"</p>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       </div>
 

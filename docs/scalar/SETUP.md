@@ -80,10 +80,10 @@ cd backend
 pip install -r requirements.txt
 
 # Run the server
-uvicorn app.main:app --host 0.0.0.0 --port 6666
+uvicorn app.main:app --host 0.0.0.0 --port 21250
 
 # Open docs
-open http://localhost:6666/docs
+open http://localhost:21250/docs
 ```
 
 ## 📝 Step 4: Use Scalar CLI (For Static Docs)
@@ -227,8 +227,8 @@ docker compose restart gemma_service
 
 ## 🤝 Need Help?
 
-- **Scalar Issues**: https://github.com/scalar/scalar/issues
-- **FastAPI Docs**: https://fastapi.tiangolo.com/
-- **Project Issues**: https://github.com/gigahidjrikaaa/GemmaVoice-SpeechAPI/issues
+- **Scalar Issues**: <https://github.com/scalar/scalar/issues>
+- **FastAPI Docs**: <https://fastapi.tiangolo.com/>
+- **Project Issues**: <https://github.com/gigahidjrikaaa/GemmaVoice-SpeechAPI/issues>
 
 Happy documenting! 🎉

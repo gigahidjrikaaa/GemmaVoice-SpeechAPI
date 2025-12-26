@@ -32,7 +32,7 @@ async def lifespan(app: FastAPI):
     
     # Initialize LLM service with async startup (lazy loading)
     llm_service = LLMService(settings=settings)
-    # await llm_service.startup()  # Removed for lazy loading
+    await llm_service.startup()
     app.state.llm_service = llm_service
 
     whisper_service = WhisperService(settings=settings)

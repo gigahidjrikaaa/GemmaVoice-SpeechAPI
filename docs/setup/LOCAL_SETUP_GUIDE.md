@@ -7,12 +7,14 @@
 ## 📋 Prerequisites
 
 ### Hardware Requirements
+
 - NVIDIA GPU with at least 8GB VRAM (recommended: 12GB+)
 - CUDA 12.4 compatible GPU (RTX 20xx series or newer)
 - 32GB RAM recommended (minimum 16GB)
 - 50GB free disk space for models
 
 ### Software Requirements
+
 - Docker Engine with NVIDIA Container Runtime
 - Docker Compose v2
 - Git with Git LFS
@@ -24,17 +26,20 @@
 ### Option A: Using HuggingFace CLI (Recommended for Large Files)
 
 1. **Install HuggingFace CLI**:
+
    ```bash
    pip install -U "huggingface_hub[cli]"
    ```
 
-2. **Login with your HuggingFace token** (get token from https://huggingface.co/settings/tokens):
+2. **Login with your HuggingFace token** (get token from <https://huggingface.co/settings/tokens>):
+
    ```bash
    huggingface-cli login
    # Paste your token when prompted
    ```
 
 3. **Download OpenAudio-S1-mini checkpoints**:
+
    ```bash
    cd backend
    
@@ -48,11 +53,13 @@
    ```
 
 4. **Verify checkpoint files** (should have these 5 files):
+
    ```bash
    ls -lh openaudio-checkpoints/
    ```
-   
+
    Expected output:
+
    ```
    codec.pth              (~1.5GB)
    config.json            (~2KB)
@@ -64,11 +71,12 @@
 ### Option B: Using Git Clone with HuggingFace Token
 
 1. **Get your HuggingFace token**:
-   - Visit: https://huggingface.co/settings/tokens
+   - Visit: <https://huggingface.co/settings/tokens>
    - Create a new token with `read` permissions
    - Copy the token (starts with `hf_...`)
 
 2. **Install Git LFS** (if not already installed):
+
    ```bash
    # Ubuntu/Debian
    sudo apt-get install git-lfs
@@ -84,6 +92,7 @@
    ```
 
 3. **Clone with authentication**:
+
    ```bash
    cd backend
    
@@ -113,7 +122,7 @@
 
 ### Option B: Manual Download from HuggingFace
 
-1. Visit: https://huggingface.co/fishaudio/openaudio-s1-mini/tree/main
+1. Visit: <https://huggingface.co/fishaudio/openaudio-s1-mini/tree/main>
 
 2. Download these 5 files directly:
    - `codec.pth`
@@ -158,6 +167,11 @@ OPENAUDIO_API_BASE=http://openaudio_api:21251
 OPENAUDIO_DEFAULT_FORMAT=wav
 OPENAUDIO_DEFAULT_NORMALIZE=true
 
+# LiveKit (Real-time Voice)
+LIVEKIT_API_KEY=devkey
+LIVEKIT_API_SECRET=secret
+LIVEKIT_URL=ws://localhost:21254
+
 # Security (optional for local testing)
 API_KEY_ENABLED=false
 RATE_LIMIT_ENABLED=false
@@ -167,6 +181,7 @@ LOG_LEVEL=INFO
 ```
 
 **Model Size Recommendations:**
+
 - `tiny` - Fastest, lowest quality (~75MB VRAM, ~1-2s/min audio)
 - `base` - **Recommended** - Good balance (~145MB VRAM, ~3-4s/min audio)
 - `small` - Better quality (~470MB VRAM, ~5-6s/min audio)
@@ -193,6 +208,7 @@ docker compose logs -f
 ```
 
 **First-time startup will:**
+
 1. Download Gemma 3 model from HuggingFace (~7GB)
 2. Download Faster-Whisper model (~145MB for base model)
 3. Load OpenAudio-S1-mini checkpoints from local files
@@ -210,21 +226,21 @@ docker ps
 
 # Expected output:
 # CONTAINER ID   IMAGE              STATUS         PORTS                    NAMES
-# xxxxxxxxxxxx   backend        Up 2 minutes   0.0.0.0:6666->6666/tcp   gemma_service
-# xxxxxxxxxxxx   openaudio_api      Up 2 minutes   0.0.0.0:21251->21251/tcp   openaudio_api
-# yyyyyyyyyyyy   openaudio_webui    Up 2 minutes   0.0.0.0:27860->7860/tcp   openaudio_webui
-
-The Web UI is exposed at `http://localhost:27860` and uses the same checkpoints as the API container.
+# xxxxxxxxxxxx   backend            Up 2 minutes   0.0.0.0:21250->8000/tcp  gemma_service
+# xxxxxxxxxxxx   openaudio_api      Up 2 minutes   0.0.0.0:21251->8000/tcp  openaudio_api
+# xxxxxxxxxxxx   whisper_service    Up 2 minutes   0.0.0.0:21252->8000/tcp  whisper_service
+# xxxxxxxxxxxx   frontend           Up 2 minutes   0.0.0.0:21253->80/tcp    frontend
+# xxxxxxxxxxxx   livekit/livekit-server Up 2 min   0.0.0.0:21254->7880/tcp  livekit
 ```
 
 ### 2. Test Gemma Service
 
 ```bash
 # Health check
-curl http://localhost:6666/health
+curl http://localhost:21250/health
 
 # Text generation
-curl -X POST http://localhost:6666/v1/generate \
+curl -X POST http://localhost:21250/v1/generate \
   -H "Content-Type: application/json" \
   -d '{
     "prompt": "Explain quantum computing in simple terms.",
@@ -307,9 +323,10 @@ npm run dev
 
 ### 4. Open Browser
 
-Navigate to: http://localhost:5173
+Navigate to: <http://localhost:5173>
 
 **Frontend Features:**
+
 - **Generation Panel** - Test text generation with Gemma 3
 - **Transcription Panel** - Upload audio files for STT
 - **Synthesis Panel** - Convert text to speech
@@ -323,16 +340,19 @@ Navigate to: http://localhost:5173
 ### Issue: OpenAudio container fails to start
 
 **Check logs:**
+
 ```bash
 docker logs openaudio_api
 ```
 
 **Common issues:**
+
 1. **Missing checkpoint files** - Verify all 5 files exist in `openaudio-checkpoints/`
 2. **Incorrect file structure** - Ensure files are directly in `openaudio-checkpoints/`, not in a subdirectory
 3. **CUDA out of memory** - OpenAudio-S1-mini needs ~10GB VRAM. Close other GPU applications.
 
 **Fix:**
+
 ```bash
 # Stop and remove containers
 docker compose down
@@ -347,17 +367,20 @@ docker compose up --build
 ### Issue: Faster-Whisper "CUDA not available" or slow inference
 
 **Check CUDA libraries:**
+
 ```bash
 docker exec gemma_service python -c "import torch; print(f'CUDA available: {torch.cuda.is_available()}')"
 ```
 
 **If False:**
+
 1. Verify NVIDIA drivers on host: `nvidia-smi`
 2. Check Docker GPU access: `docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi`
 3. Rebuild container: `docker compose up --build`
 
 **Switch to CPU mode temporarily:**
 Edit `.env`:
+
 ```bash
 FASTER_WHISPER_DEVICE=cpu
 FASTER_WHISPER_COMPUTE_TYPE=int8
@@ -366,11 +389,13 @@ FASTER_WHISPER_COMPUTE_TYPE=int8
 ### Issue: Gemma service crashes or OOM
 
 **Check logs:**
+
 ```bash
 docker logs gemma_service
 ```
 
 **Reduce GPU memory usage** - Edit `.env`:
+
 ```bash
 # In docker-compose.yml, add:
 environment:
@@ -390,6 +415,7 @@ pytest tests/ -v
 ### Issue: Services start but API calls timeout
 
 **Check if models are loading:**
+
 ```bash
 # Watch logs during startup
 docker compose logs -f gemma_service
@@ -401,6 +427,7 @@ docker compose logs -f gemma_service
 ```
 
 **First startup takes 5-10 minutes** for:
+
 - Downloading models
 - torch.compile optimization
 - GPU warm-up
@@ -429,6 +456,7 @@ docker compose logs -f gemma_service
 | **Total (single GPU, sequential)** | ~10GB peak | Models load on-demand |
 
 **Optimization for single GPU:**
+
 - Gemma and OpenAudio can't run simultaneously on <16GB VRAM
 - Backend manages this by loading/unloading as needed
 - Consider running OpenAudio on CPU if needed
@@ -438,7 +466,7 @@ docker compose logs -f gemma_service
 ## 🚀 Next Steps
 
 1. ✅ Services running? Test with `curl` commands above
-2. ✅ Frontend working? Open http://localhost:5173
+2. ✅ Frontend working? Open <http://localhost:5173>
 3. ⏭️ Add API authentication - Set `API_KEY_ENABLED=true` in `.env`
 4. ⏭️ Enable rate limiting for production
 5. ⏭️ Write integration tests - See `IMPLEMENTATION_STATUS.md`
@@ -449,9 +477,10 @@ docker compose logs -f gemma_service
 ## 📖 API Documentation
 
 Interactive API docs available at:
-- Swagger UI: http://localhost:6666/docs
-- ReDoc: http://localhost:6666/redoc
-- Prometheus metrics: http://localhost:6666/metrics
+
+- Swagger UI: <http://localhost:21250/docs>
+- ReDoc: <http://localhost:21250/redoc>
+- Prometheus metrics: <http://localhost:21250/metrics>
 
 ---
 
@@ -463,7 +492,7 @@ Interactive API docs available at:
 # Backend
 cd backend
 source .venv/bin/activate  # or .venv\Scripts\activate on Windows
-uvicorn app.main:app --reload --host 0.0.0.0 --port 6666
+uvicorn app.main:app --reload --host 0.0.0.0 --port 21250
 
 # Frontend
 cd frontend
@@ -492,10 +521,11 @@ docker compose up --build
 
 ## 📞 Support
 
-- Issues: https://github.com/gigahidjrikaaa/GemmaVoice-SpeechAPI/issues
-- Discussions: https://github.com/gigahidjrikaaa/GemmaVoice-SpeechAPI/discussions
+- Issues: <https://github.com/gigahidjrikaaa/GemmaVoice-SpeechAPI/issues>
+- Discussions: <https://github.com/gigahidjrikaaa/GemmaVoice-SpeechAPI/discussions>
 
 **Common questions:**
-- Faster-Whisper: https://github.com/SYSTRAN/faster-whisper
-- OpenAudio/Fish-Speech: https://github.com/fishaudio/fish-speech
-- Gemma models: https://huggingface.co/google/gemma-3-12b-it-qat-q4_0-gguf
+
+- Faster-Whisper: <https://github.com/SYSTRAN/faster-whisper>
+- OpenAudio/Fish-Speech: <https://github.com/fishaudio/fish-speech>
+- Gemma models: <https://huggingface.co/google/gemma-3-12b-it-qat-q4_0-gguf>
