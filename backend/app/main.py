@@ -24,11 +24,30 @@ from app.services.whisper import WhisperService
 logger = logging.getLogger(__name__)
 
 
+def _mask_credential(value: str | None) -> str:
+    if not value:
+        return "<unset>"
+    if len(value) <= 10:
+        return value
+    return f"{value[:6]}…{value[-4:]}"
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Application startup...")
 
     settings = get_settings()
+
+    livekit_enabled = bool(
+        settings.livekit_url and settings.livekit_api_key and settings.livekit_api_secret
+    )
+    logger.info(
+        "LiveKit config: enabled=%s url=%s room=%s api_key=%s",
+        livekit_enabled,
+        settings.livekit_url or "<unset>",
+        settings.livekit_room_name,
+        _mask_credential(settings.livekit_api_key),
+    )
     
     # Initialize LLM service with async startup (lazy loading)
     llm_service = LLMService(settings=settings)
