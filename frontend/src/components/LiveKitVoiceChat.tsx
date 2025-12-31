@@ -23,6 +23,7 @@ import { useClientConfig } from "../context/ConfigContext";
 import { useToast } from "./Toast";
 import { apiFetch } from "../lib/api";
 import { errorLogger } from "../lib/error";
+import { addDevLog } from "../lib/devlog";
 import { Mic, MicOff, Phone, PhoneOff, Volume2, Loader2, AlertCircle, Signal } from "lucide-react";
 
 // --- Types ---
@@ -56,11 +57,25 @@ function useConnectionDetails() {
       const { data } = await apiFetch<LiveKitStatus>(config, "/v1/livekit/status");
       setStatus(data);
       setStatusError(null);
+
+      addDevLog({
+        level: "info",
+        source: "livekit",
+        message: `Status: enabled=${data.enabled} url=${data.url ?? "<unset>"}`,
+        data,
+      });
       return data;
     } catch (err) {
       errorLogger.logError(err, '/v1/livekit/status');
       setStatus({ enabled: false, url: null, default_room: null });
       setStatusError(errorLogger.getUserFriendlyMessage(err));
+
+      addDevLog({
+        level: "error",
+        source: "livekit",
+        message: "Status check failed (/v1/livekit/status)",
+        data: { error: errorLogger.getUserFriendlyMessage(err) },
+      });
       return null;
     }
   }, [config]);
@@ -80,11 +95,25 @@ function useConnectionDetails() {
       });
 
       setTokenData(data);
+
+      addDevLog({
+        level: "info",
+        source: "livekit",
+        message: `Token issued: room=${data.room_name} identity=${data.participant_identity}`,
+        data: { room: data.room_name, identity: data.participant_identity, url: data.url },
+      });
       return data;
     } catch (err) {
       errorLogger.logError(err, '/v1/livekit/token');
       const message = errorLogger.getUserFriendlyMessage(err);
       setError(message);
+
+      addDevLog({
+        level: "error",
+        source: "livekit",
+        message: "Token request failed (/v1/livekit/token)",
+        data: { error: message, roomName },
+      });
       throw err;
     } finally {
       setLoading(false);
@@ -340,11 +369,18 @@ export function LiveKitVoiceChat({ inputDeviceId = "default", outputDeviceId = "
   // Start a new session
   const startSession = useCallback(async () => {
     try {
+      addDevLog({ level: "info", source: "livekit", message: "Starting session (requesting token)" });
       await requestToken();
       setIsSessionActive(true);
       push({ title: "Connecting...", description: "Establishing voice session" });
     } catch (err) {
       const message = errorLogger.getUserFriendlyMessage(err);
+      addDevLog({
+        level: "error",
+        source: "livekit",
+        message: "Start session failed",
+        data: { error: message },
+      });
       push({
         title: "Connection Failed",
         description: message,
@@ -355,25 +391,49 @@ export function LiveKitVoiceChat({ inputDeviceId = "default", outputDeviceId = "
 
   // End session
   const endSession = useCallback(() => {
+    addDevLog({
+      level: "info",
+      source: "livekit",
+      message: "Ending session (disconnecting)",
+      data: tokenData ? { room: tokenData.room_name, identity: tokenData.participant_identity } : undefined,
+    });
     setIsSessionActive(false);
     clearToken();
     push({ title: "Session Ended", description: "Voice chat disconnected" });
-  }, [clearToken, push]);
+  }, [clearToken, push, tokenData]);
 
   // Handle room events
   const handleConnected = useCallback(() => {
+    addDevLog({
+      level: "info",
+      source: "livekit",
+      message: "Room connected",
+      data: tokenData ? { room: tokenData.room_name, identity: tokenData.participant_identity, url: tokenData.url } : undefined,
+    });
     push({ title: "Connected", description: "Voice session active" });
-  }, [push]);
+  }, [push, tokenData]);
 
   const handleDisconnected = useCallback(() => {
+    addDevLog({
+      level: "warn",
+      source: "livekit",
+      message: "Room disconnected",
+      data: tokenData ? { room: tokenData.room_name, identity: tokenData.participant_identity } : undefined,
+    });
     if (isSessionActive) {
       endSession();
     }
-  }, [isSessionActive, endSession]);
+  }, [isSessionActive, endSession, tokenData]);
 
   const handleError = useCallback(
     (err: Error) => {
       errorLogger.logError(err, 'LiveKit Room Error');
+      addDevLog({
+        level: "error",
+        source: "livekit",
+        message: "Room error",
+        data: { error: err.message },
+      });
       push({
         title: "Room Error",
         description: err.message,

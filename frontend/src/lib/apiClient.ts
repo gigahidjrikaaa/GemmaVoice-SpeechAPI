@@ -1,4 +1,5 @@
 import type { ClientConfig } from "../context/ConfigContext";
+import { addDevLog } from "./devlog";
 
 export type ApiError = {
   error: string;
@@ -20,6 +21,9 @@ export async function apiFetch<T>(
   options: RequestInit = {}
 ): Promise<ApiResponse<T>> {
   const url = `${config.baseUrl}${endpoint}`;
+  const startedAt = performance.now();
+  const method = (options.method || "GET").toUpperCase();
+  addDevLog({ level: "info", source: "api", message: `${method} ${endpoint}` });
   const headers = new Headers(options.headers);
 
   if (config.apiKey) {
@@ -49,6 +53,14 @@ export async function apiFetch<T>(
 
   const requestId = response.headers.get("X-Request-ID") || undefined;
 
+  const durationMs = Math.round(performance.now() - startedAt);
+  addDevLog({
+    level: response.ok ? "info" : "warn",
+    source: "api",
+    message: `${method} ${endpoint} → ${response.status} (${durationMs}ms)`,
+    data: { status: response.status, statusText: response.statusText, durationMs, requestId },
+  });
+
   if (!response.ok) {
     let error: ApiError;
     try {
@@ -59,6 +71,13 @@ export async function apiFetch<T>(
         requestId,
       };
     }
+
+    addDevLog({
+      level: "error",
+      source: "api",
+      message: `API error: ${method} ${endpoint} → ${response.status}`,
+      data: { ...error, status: response.status },
+    });
     throw error;
   }
 
@@ -77,6 +96,9 @@ export async function apiFetchStream(
   onComplete?: () => void
 ): Promise<void> {
   const url = `${config.baseUrl}${endpoint}`;
+  const startedAt = performance.now();
+  const method = (options.method || "GET").toUpperCase();
+  addDevLog({ level: "info", source: "api", message: `STREAM ${method} ${endpoint} (start)` });
   const headers = new Headers(options.headers);
 
   if (config.apiKey) {
@@ -113,6 +135,12 @@ export async function apiFetchStream(
         error: `HTTP ${response.status}: ${response.statusText}`,
       };
     }
+    addDevLog({
+      level: "error",
+      source: "api",
+      message: `Stream error: ${method} ${endpoint} → ${response.status}`,
+      data: { ...error, status: response.status },
+    });
     throw error;
   }
 
@@ -172,6 +200,8 @@ export async function apiFetchStream(
       }
     }
   } finally {
+    const durationMs = Math.round(performance.now() - startedAt);
+    addDevLog({ level: "info", source: "api", message: `STREAM ${method} ${endpoint} (end, ${durationMs}ms)` });
     reader.releaseLock();
   }
 }
@@ -189,7 +219,10 @@ export function createWebSocket(
   const wsUrl = config.baseUrl.replace(/^http/, "ws") + endpoint;
   const ws = new WebSocket(wsUrl);
 
+  addDevLog({ level: "info", source: "ws", message: `WS connect ${endpoint}`, data: { wsUrl } });
+
   ws.onopen = () => {
+    addDevLog({ level: "info", source: "ws", message: `WS open ${endpoint}` });
     // Send API key if configured
     if (config.apiKey) {
       ws.send(JSON.stringify({ type: "auth", apiKey: config.apiKey }));
@@ -207,11 +240,13 @@ export function createWebSocket(
 
   ws.onerror = (event) => {
     console.error("WebSocket error:", event);
+    addDevLog({ level: "error", source: "ws", message: `WS error ${endpoint}`, data: { event } });
     onError?.(event);
   };
 
   ws.onclose = () => {
     console.log("WebSocket closed");
+    addDevLog({ level: "warn", source: "ws", message: `WS closed ${endpoint}` });
     onClose?.();
   };
 

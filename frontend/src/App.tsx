@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { ConfigProvider } from "./context/ConfigContext";
 import { TabsProvider, useTabs } from "./context/TabsContext";
@@ -12,6 +12,7 @@ import { VoiceChatPanel } from "./components/VoiceChatPanel";
 import { AboutPanel } from "./components/AboutPanel";
 import { ToastProvider } from "./components/Toast";
 import { CodeViewer } from "./components/CodeViewer";
+import { DevLogsPanel } from "./components/DevLogsPanel";
 import { 
   Code, 
   Layout, 
@@ -34,6 +35,7 @@ const tabs = [
 function AppShell() {
   const { activeTab, setActiveTab } = useTabs();
   const { snippet, showCode, setShowCode } = useCode();
+  const [consoleView, setConsoleView] = useState<"logs" | "requests">("logs");
 
   const ActiveComponent = useMemo(() => 
     tabs.find(t => t.id === activeTab)?.component || tabs[0].component, 
@@ -113,34 +115,70 @@ function AppShell() {
             }`}
           >
             <div className="p-4 border-b border-slate-800 bg-slate-900/50 flex items-center justify-between">
-              <h2 className="text-sm font-semibold text-slate-200 flex items-center gap-2">
-                <Layout className="h-4 w-4 text-emerald-400" />
-                Developer Console
-              </h2>
-              <button onClick={() => setShowCode(false)} className="text-slate-500 hover:text-slate-300">
+              <div className="flex items-center gap-3 min-w-0">
+                <h2 className="text-sm font-semibold text-slate-200 flex items-center gap-2 shrink-0">
+                  <Layout className="h-4 w-4 text-emerald-400" />
+                  Developer Console
+                </h2>
+                <div className="flex items-center gap-1 rounded-lg border border-slate-800 bg-slate-950/40 p-1">
+                  <button
+                    type="button"
+                    onClick={() => setConsoleView("logs")}
+                    aria-pressed={consoleView === "logs"}
+                    className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${
+                      consoleView === "logs"
+                        ? "bg-slate-800 text-slate-100"
+                        : "text-slate-400 hover:text-slate-200 hover:bg-slate-900"
+                    }`}
+                  >
+                    Logs
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setConsoleView("requests")}
+                    aria-pressed={consoleView === "requests"}
+                    className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${
+                      consoleView === "requests"
+                        ? "bg-slate-800 text-slate-100"
+                        : "text-slate-400 hover:text-slate-200 hover:bg-slate-900"
+                    }`}
+                  >
+                    Requests
+                  </button>
+                </div>
+              </div>
+              <button onClick={() => setShowCode(false)} className="text-slate-500 hover:text-slate-300" aria-label="Close developer console">
                 <Menu className="h-4 w-4" />
               </button>
             </div>
-            <div className="flex-1 overflow-y-auto p-4 bg-slate-950">
-              {snippet ? (
-                <div className="flex flex-col gap-4">
-                  <div className="rounded-lg border border-slate-800 bg-slate-900/50 p-4">
-                    <h3 className="text-xs font-medium text-slate-400 mb-2 uppercase tracking-wider">Current Action</h3>
-                    <p className="text-sm text-slate-200 font-medium">{snippet.title}</p>
-                  </div>
-                  <CodeViewer
-                    code={snippet.code}
-                    language={snippet.language}
-                    title="API Request"
-                    className="shadow-xl"
-                  />
+            <div className="flex-1 min-h-0 p-4 bg-slate-950 overflow-hidden flex flex-col">
+              {consoleView === "logs" ? (
+                <div className="flex-1 min-h-0">
+                  <DevLogsPanel />
                 </div>
               ) : (
-                <div className="flex flex-col items-center justify-center h-full text-slate-500 gap-3">
-                  <Code className="h-12 w-12 opacity-20" />
-                  <p className="text-sm text-center max-w-[200px]">
-                    Interact with the playground to see API requests and code snippets here.
-                  </p>
+                <div className="flex-1 overflow-y-auto">
+                  {snippet ? (
+                    <div className="flex flex-col gap-4">
+                      <div className="rounded-lg border border-slate-800 bg-slate-900/50 p-4">
+                        <h3 className="text-xs font-medium text-slate-400 mb-2 uppercase tracking-wider">Current Action</h3>
+                        <p className="text-sm text-slate-200 font-medium">{snippet.title}</p>
+                      </div>
+                      <CodeViewer
+                        code={snippet.code}
+                        language={snippet.language}
+                        title="API Request"
+                        className="shadow-xl"
+                      />
+                    </div>
+                  ) : (
+                    <div className="flex flex-col items-center justify-center h-full text-slate-500 gap-3">
+                      <Code className="h-12 w-12 opacity-20" />
+                      <p className="text-sm text-center max-w-[200px]">
+                        Interact with the playground to capture requests here.
+                      </p>
+                    </div>
+                  )}
                 </div>
               )}
             </div>

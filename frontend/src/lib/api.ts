@@ -1,4 +1,5 @@
 import { ClientConfig } from "../context/ConfigContext";
+import { addDevLog } from "./devlog";
 
 export class APIError extends Error {
   constructor(public status: number, message: string, public data?: any) {
@@ -16,6 +17,13 @@ export async function apiFetch<T>(
   options: RequestInit = {}
 ): Promise<{ data: T; response: Response }> {
   const url = `${config.baseUrl}${endpoint}`;
+  const startedAt = performance.now();
+  const method = (options.method || "GET").toUpperCase();
+  addDevLog({
+    level: "info",
+    source: "api",
+    message: `${method} ${endpoint}`,
+  });
   
   const headers = new Headers(options.headers);
   if (config.apiKey) {
@@ -30,6 +38,19 @@ export async function apiFetch<T>(
   const response = await fetch(url, {
     ...options,
     headers,
+  });
+
+  const durationMs = Math.round(performance.now() - startedAt);
+  addDevLog({
+    level: response.ok ? "info" : "warn",
+    source: "api",
+    message: `${method} ${endpoint} → ${response.status} (${durationMs}ms)`,
+    data: {
+      status: response.status,
+      statusText: response.statusText,
+      durationMs,
+      requestId: response.headers.get("X-Request-ID") || undefined,
+    },
   });
 
   if (!response.ok) {
@@ -47,6 +68,12 @@ export async function apiFetch<T>(
       // Ignore JSON parse error
     }
 
+    addDevLog({
+      level: "error",
+      source: "api",
+      message: `API error: ${method} ${endpoint} → ${response.status}`,
+      data: { message: errorMessage, status: response.status, errorData },
+    });
     throw new APIError(response.status, errorMessage, errorData);
   }
 
@@ -69,6 +96,9 @@ export async function apiFetchStream(
   onEvent: (event: { event?: string; data: any }) => void
 ): Promise<void> {
   const url = `${config.baseUrl}${endpoint}`;
+  const startedAt = performance.now();
+  const method = (options.method || "GET").toUpperCase();
+  addDevLog({ level: "info", source: "api", message: `STREAM ${method} ${endpoint} (start)` });
   
   const headers = new Headers(options.headers);
   if (config.apiKey) {
@@ -86,6 +116,12 @@ export async function apiFetchStream(
       const errorData = await response.json();
       if (errorData.detail) errorMessage = errorData.detail;
     } catch (e) { /* ignore */ }
+    addDevLog({
+      level: "error",
+      source: "api",
+      message: `Stream error: ${method} ${endpoint} → ${response.status}`,
+      data: { message: errorMessage, status: response.status },
+    });
     throw new APIError(response.status, errorMessage);
   }
 
@@ -135,6 +171,8 @@ export async function apiFetchStream(
       }
     }
   } finally {
+    const durationMs = Math.round(performance.now() - startedAt);
+    addDevLog({ level: "info", source: "api", message: `STREAM ${method} ${endpoint} (end, ${durationMs}ms)` });
     reader.releaseLock();
   }
 }
