@@ -16,6 +16,7 @@ Environment Variables Required:
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 from typing import Optional
@@ -79,8 +80,20 @@ async def entrypoint(ctx: JobContext) -> None:
     # Get service factory
     factory = await get_service_factory()
     
-    # Extract options from job metadata or use defaults
-    job_metadata = ctx.job.metadata or {}
+    # Extract options from job metadata or use defaults.
+    # Depending on how the job is dispatched, metadata may arrive as a dict or a JSON string.
+    job_metadata_raw = ctx.job.metadata or {}
+    if isinstance(job_metadata_raw, str):
+        try:
+            job_metadata = json.loads(job_metadata_raw) if job_metadata_raw.strip() else {}
+        except json.JSONDecodeError:
+            logger.warning("Invalid job metadata JSON; ignoring")
+            job_metadata = {}
+    elif isinstance(job_metadata_raw, dict):
+        job_metadata = job_metadata_raw
+    else:
+        job_metadata = {}
+
     instructions = job_metadata.get("instructions", None)
     reference_id = job_metadata.get("voice_reference_id", None)
     language = job_metadata.get("language", None)

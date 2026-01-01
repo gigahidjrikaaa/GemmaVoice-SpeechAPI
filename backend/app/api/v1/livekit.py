@@ -5,6 +5,7 @@ that allow clients to connect to LiveKit rooms for voice agent sessions.
 """
 
 import datetime
+import json
 import logging
 import uuid
 from typing import Optional
@@ -40,6 +41,26 @@ class TokenRequest(BaseModel):
         description="Unique identity for the participant. Auto-generated if not provided.",
         min_length=1,
         max_length=128,
+    )
+
+    # Agent dispatch metadata (optional)
+    agent_instructions: Optional[str] = Field(
+        default=None,
+        description="Optional system instructions passed to the agent job.",
+        min_length=1,
+        max_length=2000,
+    )
+    agent_voice_reference_id: Optional[str] = Field(
+        default=None,
+        description="Optional OpenAudio voice reference ID for the agent job.",
+        min_length=1,
+        max_length=128,
+    )
+    agent_language: Optional[str] = Field(
+        default=None,
+        description="Optional language hint for STT (e.g., 'en', 'id').",
+        min_length=1,
+        max_length=32,
     )
 
 
@@ -154,6 +175,35 @@ async def generate_token(
             can_publish_data=True,
         )
 
+        # Token-based agent dispatch:
+        # When the participant joins, LiveKit will dispatch the specified agent worker
+        # into the room (matching WorkerOptions.agent_name).
+        agent_job_metadata: dict[str, str] = {}
+        if isinstance(request.agent_instructions, str) and request.agent_instructions.strip():
+            agent_job_metadata["instructions"] = request.agent_instructions.strip()
+        if isinstance(request.agent_voice_reference_id, str) and request.agent_voice_reference_id.strip():
+            agent_job_metadata["voice_reference_id"] = request.agent_voice_reference_id.strip()
+        if isinstance(request.agent_language, str) and request.agent_language.strip():
+            agent_job_metadata["language"] = request.agent_language.strip()
+
+        try:
+            room_config = api.RoomConfiguration(
+                agents=[
+                    api.RoomAgentDispatch(
+                        agent_name="gemma-voice-agent",
+                        metadata=json.dumps(agent_job_metadata) if agent_job_metadata else "{}",
+                    )
+                ]
+            )
+        except AttributeError as e:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=(
+                    "Installed LiveKit SDK does not support token-based agent dispatch. "
+                    "Upgrade livekit to a newer version."
+                ),
+            ) from e
+
         token = (
             api.AccessToken(
                 api_key=settings.livekit_api_key,
@@ -164,6 +214,17 @@ async def generate_token(
             .with_ttl(ttl)
             .with_grants(grants)
         )
+
+        if hasattr(token, "with_room_config"):
+            token = token.with_room_config(room_config)
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=(
+                    "Installed LiveKit SDK does not support token-based agent dispatch. "
+                    "Upgrade livekit to a newer version."
+                ),
+            )
 
         jwt_token = token.to_jwt()
 

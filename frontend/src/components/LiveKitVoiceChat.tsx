@@ -18,7 +18,7 @@ import {
   useVoiceAssistant,
   BarVisualizer,
 } from "@livekit/components-react";
-import { ConnectionState, Track } from "livekit-client";
+import { ConnectionState, RoomEvent, Track } from "livekit-client";
 import { useClientConfig } from "../context/ConfigContext";
 import { useToast } from "./Toast";
 import { apiFetch } from "../lib/api";
@@ -43,7 +43,13 @@ interface LiveKitStatus {
 
 // --- Connection Details Hook ---
 
-function useConnectionDetails() {
+type AgentDispatchConfig = {
+  agentInstructions?: string;
+  agentVoiceReferenceId?: string;
+  agentLanguage?: string;
+};
+
+function useConnectionDetails(agentConfig?: AgentDispatchConfig) {
   const { config } = useClientConfig();
   const [status, setStatus] = useState<LiveKitStatus | null>(null);
   const [statusError, setStatusError] = useState<string | null>(null);
@@ -87,11 +93,23 @@ function useConnectionDetails() {
 
     try {
       errorLogger.logInfo('Requesting LiveKit token', { roomName });
+
+      const body: Record<string, unknown> = {
+        room_name: roomName,
+      };
+      if (agentConfig?.agentInstructions?.trim()) {
+        body.agent_instructions = agentConfig.agentInstructions.trim();
+      }
+      if (agentConfig?.agentVoiceReferenceId?.trim()) {
+        body.agent_voice_reference_id = agentConfig.agentVoiceReferenceId.trim();
+      }
+      if (agentConfig?.agentLanguage?.trim()) {
+        body.agent_language = agentConfig.agentLanguage.trim();
+      }
+
       const { data } = await apiFetch<TokenResponse>(config, "/v1/livekit/token", {
         method: "POST",
-        body: JSON.stringify({
-          room_name: roomName,
-        }),
+        body: JSON.stringify(body),
       });
 
       setTokenData(data);
@@ -118,7 +136,7 @@ function useConnectionDetails() {
     } finally {
       setLoading(false);
     }
-  }, [config]);
+  }, [config, agentConfig?.agentInstructions, agentConfig?.agentLanguage, agentConfig?.agentVoiceReferenceId]);
 
   // Clear token
   const clearToken = useCallback(() => {
@@ -276,6 +294,47 @@ function VoiceAssistantView() {
 
 function RoomSession({ onDisconnect }: { onDisconnect: () => void }) {
   const connectionState = useConnectionState();
+  const room = useRoomContext();
+
+  useEffect(() => {
+    if (!room) return;
+
+    const handleDataReceived = (
+      payload: Uint8Array,
+      participant?: { identity?: string },
+      kind?: unknown,
+      topic?: string
+    ) => {
+      try {
+        const text = new TextDecoder().decode(payload);
+        let parsed: unknown = text;
+        try {
+          parsed = JSON.parse(text);
+        } catch {
+          // keep raw text
+        }
+
+        addDevLog({
+          level: "info",
+          source: "livekit",
+          message: `Data message received${topic ? ` (topic=${topic})` : ""} from ${participant?.identity ?? "unknown"}`,
+          data: { topic, kind, payload: parsed },
+        });
+      } catch (err) {
+        addDevLog({
+          level: "warn",
+          source: "livekit",
+          message: "Failed to decode data message",
+          data: { error: (err as Error)?.message ?? String(err) },
+        });
+      }
+    };
+
+    room.on(RoomEvent.DataReceived, handleDataReceived);
+    return () => {
+      room.off(RoomEvent.DataReceived, handleDataReceived);
+    };
+  }, [room]);
   
   return (
     <div className="flex flex-col h-full bg-slate-950">
@@ -338,9 +397,20 @@ function RoomSession({ onDisconnect }: { onDisconnect: () => void }) {
 export interface LiveKitVoiceChatProps {
   inputDeviceId?: string;
   outputDeviceId?: string;
+
+  // Optional: per-session agent dispatch metadata
+  agentInstructions?: string;
+  agentVoiceReferenceId?: string;
+  agentLanguage?: string;
 }
 
-export function LiveKitVoiceChat({ inputDeviceId = "default", outputDeviceId = "default" }: LiveKitVoiceChatProps) {
+export function LiveKitVoiceChat({
+  inputDeviceId = "default",
+  outputDeviceId = "default",
+  agentInstructions,
+  agentVoiceReferenceId,
+  agentLanguage,
+}: LiveKitVoiceChatProps) {
   const { push } = useToast();
   const {
     status,
@@ -351,7 +421,11 @@ export function LiveKitVoiceChat({ inputDeviceId = "default", outputDeviceId = "
     checkStatus,
     requestToken,
     clearToken,
-  } = useConnectionDetails();
+  } = useConnectionDetails({
+    agentInstructions,
+    agentVoiceReferenceId,
+    agentLanguage,
+  });
 
   const { config } = useClientConfig();
 

@@ -636,53 +636,82 @@ export function VoiceChatPanel() {
         <div className="flex flex-col gap-6 h-full">
             <InstructionsPanel
                 title="🎙️ Voice Chat"
-                description="Interact with Gemma 3 using your voice. Choose between real-time conversation or file-based analysis."
+                description="Interact with Gemma 3 using your voice. Choose between Real-time (LiveKit) or Turn-based (WebSocket)."
                 steps={[
-                    { step: 1, title: "Select Mode", description: "Choose 'Live Chat' for real-time or 'File Analysis' for pre-recorded audio." },
-                    { step: 2, title: "Provide Input", description: "Speak into your microphone or upload an audio file." },
-                    { step: 3, title: "Get Response", description: "Receive both text transcript and synthesized audio response." }
+                    { step: 1, title: "Select Connection", description: "Pick LiveKit for real-time talk, or WebSocket for turn-based voice." },
+                    { step: 2, title: "Provide Input", description: "Speak into your microphone (turn-based) or join a room (real-time)." },
+                    { step: 3, title: "Get Response", description: "Hear the AI response and see status/logs in the console." }
                 ]}
                 tips={[
-                    "Use headphones for Live Chat to avoid echo.",
-                    "File Analysis is better for long, complex queries.",
+                    "Use LiveKit for the most natural live conversation.",
+                    "Use WebSocket when you want turn-based, API-like interactions.",
                     "Instructions apply to both modes to set the persona."
                 ]}
             />
 
-            {/* Connection Mode Selector */}
-            <div className="flex items-center justify-between bg-slate-900/50 p-2 rounded-xl border border-slate-800">
-                <div className="flex items-center gap-4">
-                    <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider ml-2">Connection</span>
-                    <div className="flex p-1 bg-slate-950 rounded-lg border border-slate-800">
-                        <button
-                            onClick={() => setConnectionMode("websocket")}
-                            className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
-                                connectionMode === "websocket"
-                                    ? "bg-blue-500 text-white shadow-lg shadow-blue-500/20"
-                                    : "text-slate-400 hover:text-slate-200"
-                            }`}
-                        >
-                            <Wifi className="h-3 w-3" />
-                            WebSocket
-                        </button>
-                        <button
-                            onClick={() => setConnectionMode("livekit")}
-                            className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
-                                connectionMode === "livekit"
-                                    ? "bg-purple-500 text-white shadow-lg shadow-purple-500/20"
-                                    : "text-slate-400 hover:text-slate-200"
-                            }`}
-                        >
-                            <Server className="h-3 w-3" />
-                            LiveKit
-                        </button>
+            {/** Switching connection modes should cleanly stop the other mode. */}
+            {/** LiveKit mode is self-contained; unmounting it ends the room session. */}
+            {/** WebSocket mode uses a shared connection; we must stop it explicitly on mode switch. */}
+            <div className="sr-only" aria-live="polite" />
+
+            {/* Connection Mode Selector (Separated) */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <button
+                    type="button"
+                    aria-pressed={connectionMode === "livekit"}
+                    onClick={() => {
+                        if (connectionMode === "websocket" && isConnected) stopConversation();
+                        setConnectionMode("livekit");
+                    }}
+                    className={`text-left rounded-xl border p-4 transition-all ${
+                        connectionMode === "livekit"
+                            ? "border-purple-500/40 bg-slate-900/60 ring-1 ring-purple-500/20"
+                            : "border-slate-800 bg-slate-900/30 hover:bg-slate-900/50"
+                    }`}
+                >
+                    <div className="flex items-start justify-between gap-4">
+                        <div className="min-w-0">
+                            <div className="flex items-center gap-2">
+                                <Server className={`h-4 w-4 ${connectionMode === "livekit" ? "text-purple-400" : "text-slate-500"}`} />
+                                <h3 className="text-sm font-semibold text-slate-200">Real-time (LiveKit)</h3>
+                            </div>
+                            <p className="mt-1 text-xs text-slate-400">
+                                Live talk with interruption support and low latency.
+                            </p>
+                        </div>
+                        {connectionMode === "livekit" ? (
+                            <CheckCircle2 className="h-4 w-4 text-purple-400 shrink-0" />
+                        ) : null}
                     </div>
-                </div>
-                <span className="text-xs text-slate-500 mr-2 hidden sm:block">
-                    {connectionMode === "livekit" 
-                        ? "Low-latency SFU for production" 
-                        : "Direct WebSocket for development"}
-                </span>
+                </button>
+
+                <button
+                    type="button"
+                    aria-pressed={connectionMode === "websocket"}
+                    onClick={() => {
+                        setConnectionMode("websocket");
+                    }}
+                    className={`text-left rounded-xl border p-4 transition-all ${
+                        connectionMode === "websocket"
+                            ? "border-blue-500/40 bg-slate-900/60 ring-1 ring-blue-500/20"
+                            : "border-slate-800 bg-slate-900/30 hover:bg-slate-900/50"
+                    }`}
+                >
+                    <div className="flex items-start justify-between gap-4">
+                        <div className="min-w-0">
+                            <div className="flex items-center gap-2">
+                                <Wifi className={`h-4 w-4 ${connectionMode === "websocket" ? "text-blue-400" : "text-slate-500"}`} />
+                                <h3 className="text-sm font-semibold text-slate-200">Turn-based (WebSocket)</h3>
+                            </div>
+                            <p className="mt-1 text-xs text-slate-400">
+                                Half-duplex voice: you speak, then the AI responds.
+                            </p>
+                        </div>
+                        {connectionMode === "websocket" ? (
+                            <CheckCircle2 className="h-4 w-4 text-blue-400 shrink-0" />
+                        ) : null}
+                    </div>
+                </button>
             </div>
 
             <div className="rounded-xl border border-slate-800 bg-slate-900/30 p-4">
@@ -728,7 +757,11 @@ export function VoiceChatPanel() {
             {/* LiveKit Mode */}
             {connectionMode === "livekit" && (
                 <div className="rounded-xl border border-slate-800 bg-slate-900/50 overflow-hidden min-h-[500px]">
-                    <LiveKitVoiceChat inputDeviceId={selectedInputDeviceId} outputDeviceId={selectedOutputDeviceId} />
+                    <LiveKitVoiceChat
+                        inputDeviceId={selectedInputDeviceId}
+                        outputDeviceId={selectedOutputDeviceId}
+                        agentInstructions={request.instructions}
+                    />
                 </div>
             )}
 
@@ -749,7 +782,7 @@ export function VoiceChatPanel() {
                                 }`}
                             >
                                 <Mic className="h-4 w-4" />
-                                Live Chat
+                                Turn-based Chat
                             </button>
                             <button
                                 onClick={() => setActiveMode("file")}
