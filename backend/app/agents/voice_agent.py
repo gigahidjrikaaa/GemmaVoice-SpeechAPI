@@ -23,6 +23,31 @@ from .plugins import GemmaLLM, OpenAudioTTS, WhisperSTT
 
 logger = logging.getLogger(__name__)
 
+_silero_vad: object | None = None
+
+
+def _get_silero_vad() -> object:
+    global _silero_vad
+    if _silero_vad is None:
+        # Silero VAD runs on CPU by default and enables streaming-style turn detection
+        # even when using a non-streaming STT backend (like Whisper batch transcription).
+        from livekit.plugins.silero import VAD
+
+        _silero_vad = VAD.load(force_cpu=True)
+    return _silero_vad
+
+
+def prewarm_livekit_plugins() -> None:
+    """Preload/initialize LiveKit plugins on the main thread.
+
+    Some LiveKit plugins register themselves at import time and will raise
+    if imported from a non-main thread. When the worker uses THREAD executor,
+    job entrypoints run in background threads, so we must ensure imports happen
+    during worker startup.
+    """
+
+    _get_silero_vad()
+
 # Default system prompt for the voice agent
 DEFAULT_SYSTEM_PROMPT = """You are a helpful AI voice assistant powered by Gemma.
 Be concise and natural in your responses since this is a voice conversation.
@@ -147,6 +172,7 @@ async def create_agent_session(
     """
     session = AgentSession(
         stt=agent.stt,
+        vad=_get_silero_vad(),
         llm=agent.llm,
         tts=agent.tts,
         
@@ -189,13 +215,32 @@ class ServiceFactory:
         logger.info("Starting services...")
         
         # Create services
-        self._llm_service = LLMService(self._settings)
+        # NOTE: the LiveKit worker can be configured to use a remote LLM via HTTP
+        # to avoid loading the GGUF model twice (which can cause CUDA OOM).
+        import os
+        llm_mode = (os.environ.get("AGENT_LLM_MODE") or "local").strip().lower()
+        if llm_mode == "remote":
+            from app.agents.remote_llm_service import RemoteLLMService
+
+            api_base_url = (os.environ.get("AGENT_LLM_API_BASE_URL") or "http://gemma_service:6666").strip()
+            api_key_header = (os.environ.get("AGENT_LLM_API_KEY_HEADER") or "X-API-Key").strip()
+            api_key = (os.environ.get("AGENT_LLM_API_KEY") or "").strip() or None
+
+            # Type: RemoteLLMService implements the subset of LLMService used by the agent.
+            self._llm_service = RemoteLLMService(
+                api_base_url=api_base_url,
+                api_key_header=api_key_header,
+                api_key=api_key,
+            )  # type: ignore[assignment]
+            logger.info("ServiceFactory using REMOTE LLM: %s", api_base_url)
+        else:
+            self._llm_service = LLMService(self._settings)
         self._openaudio_service = OpenAudioService(self._settings)
         self._whisper_service = WhisperService(self._settings)
         
         # Start services concurrently
         await asyncio.gather(
-            self._llm_service.startup(),
+            self._llm_service.startup(),  # type: ignore[union-attr]
             self._openaudio_service.startup(),
             self._whisper_service.startup(),
         )

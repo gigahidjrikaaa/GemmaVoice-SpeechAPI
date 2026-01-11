@@ -34,6 +34,7 @@ from livekit.agents.types import (
 
 from app.services.llm import LLMService
 from app.config.settings import get_settings
+from app.agents import telemetry
 
 logger = logging.getLogger(__name__)
 
@@ -197,8 +198,23 @@ class GemmaLLMStream(LLMStream):
         )
         
         start_time = time.perf_counter()
+        await telemetry.emit(
+            "LLM_START",
+            data={
+                "provider": self._llm.provider,
+                "model": self._llm.model,
+                "request_id": self._request_id,
+                "prompt_len": len(prompt),
+                "max_tokens": self._opts.max_tokens,
+                "temperature": self._opts.temperature,
+            },
+        )
         generated_tokens = 0
         generated_text = ""
+
+        # Throttle telemetry chunk events (avoid spamming the store).
+        last_emit = time.monotonic()
+        buffered = ""
         
         try:
             # Stream tokens from llama.cpp
@@ -221,6 +237,19 @@ class GemmaLLMStream(LLMStream):
                 
                 generated_text += delta_text
                 generated_tokens += 1
+
+                buffered += delta_text
+                now = time.monotonic()
+                if buffered and (now - last_emit) >= 0.5:
+                    await telemetry.emit(
+                        "LLM_CHUNK",
+                        data={
+                            "request_id": self._request_id,
+                            "text": buffered,
+                        },
+                    )
+                    buffered = ""
+                    last_emit = now
                 
                 # Emit chat chunk
                 chat_chunk = ChatChunk(
@@ -239,6 +268,16 @@ class GemmaLLMStream(LLMStream):
             
             # Send final chunk with usage info
             duration = time.perf_counter() - start_time
+
+            if buffered:
+                await telemetry.emit(
+                    "LLM_CHUNK",
+                    data={
+                        "request_id": self._request_id,
+                        "text": buffered,
+                    },
+                )
+                buffered = ""
             
             final_chunk = ChatChunk(
                 request_id=self._request_id,
@@ -256,12 +295,29 @@ class GemmaLLMStream(LLMStream):
                 generated_tokens,
                 duration,
             )
+
+            await telemetry.emit(
+                "LLM_DONE",
+                data={
+                    "provider": self._llm.provider,
+                    "model": self._llm.model,
+                    "request_id": self._request_id,
+                    "completion_tokens": generated_tokens,
+                    "elapsed_s": round(duration, 3),
+                },
+            )
             
         except asyncio.CancelledError:
             logger.info("GemmaLLMStream cancelled")
+            await telemetry.emit("LLM_CANCELLED", data={"request_id": self._request_id})
             raise
         except Exception as e:
             logger.exception("GemmaLLMStream failed")
+            await telemetry.emit(
+                "LLM_ERROR",
+                message=str(e),
+                data={"request_id": self._request_id, "provider": self._llm.provider, "model": self._llm.model},
+            )
             raise
 
     def _build_prompt(self) -> str:

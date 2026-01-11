@@ -3,8 +3,8 @@
 
 port: 7880
 rtc:
-  port_range_start: 50000
-  port_range_end: 50100
+  port_range_start: 40000
+  port_range_end: 40100
   tcp_port: 7881
   # Note: do not set `udp_port` when `port_range_start/end` are set.
   # `udp_port` enables UDP mux and requires port_range_* to be unset.

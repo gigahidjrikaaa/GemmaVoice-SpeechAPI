@@ -39,6 +39,7 @@ from livekit.agents.utils import AudioBuffer, is_given
 
 from app.services.whisper import WhisperService
 from app.config.settings import get_settings
+from app.agents import telemetry
 
 logger = logging.getLogger(__name__)
 
@@ -165,6 +166,15 @@ class WhisperSTT(STT):
         lang = language if is_given(language) else self._opts.language
         
         try:
+            await telemetry.emit(
+                "STT_START",
+                data={
+                    "provider": self.provider,
+                    "model": self.model,
+                    "bytes": len(audio_bytes),
+                    "language": lang,
+                },
+            )
             # Call the Whisper service
             result = await self._whisper_service.transcribe(
                 audio_bytes,
@@ -182,6 +192,18 @@ class WhisperSTT(STT):
                 duration,
                 result.text[:100] if result.text else "(empty)",
             )
+
+            if result.text and result.text.strip():
+                await telemetry.emit(
+                    "STT_FINAL_TRANSCRIPT",
+                    data={
+                        "provider": self.provider,
+                        "model": self.model,
+                        "language": result.language or lang,
+                        "text": result.text,
+                        "elapsed_s": round(duration, 3),
+                    },
+                )
             
             # Build speech event
             return SpeechEvent(
@@ -200,6 +222,11 @@ class WhisperSTT(STT):
             
         except Exception as e:
             logger.exception("WhisperSTT transcription failed")
+            await telemetry.emit(
+                "STT_ERROR",
+                message=str(e),
+                data={"provider": self.provider, "model": self.model},
+            )
             raise
 
     def stream(
@@ -303,6 +330,16 @@ class WhisperSpeechStream(RecognizeStream):
         self._event_ch.send_nowait(
             SpeechEvent(type=SpeechEventType.START_OF_SPEECH)
         )
+
+        await telemetry.emit(
+            "STT_SEGMENT_START",
+            data={
+                "provider": self._stt.provider,
+                "model": self._stt.model,
+                "frames": len(self._frames),
+                "language": self._language,
+            },
+        )
         
         # Combine frames
         combined_frame = rtc.combine_audio_frames(self._frames)
@@ -327,6 +364,15 @@ class WhisperSpeechStream(RecognizeStream):
             
             # Emit transcription result
             if result.text.strip():
+                await telemetry.emit(
+                    "STT_FINAL_TRANSCRIPT",
+                    data={
+                        "provider": self._stt.provider,
+                        "model": self._stt.model,
+                        "language": result.language or self._language,
+                        "text": result.text,
+                    },
+                )
                 self._event_ch.send_nowait(
                     SpeechEvent(
                         type=SpeechEventType.FINAL_TRANSCRIPT,
@@ -367,6 +413,11 @@ class WhisperSpeechStream(RecognizeStream):
             
         except Exception as e:
             logger.exception("WhisperSpeechStream transcription failed")
+            await telemetry.emit(
+                "STT_ERROR",
+                message=str(e),
+                data={"provider": self._stt.provider, "model": self._stt.model},
+            )
             # Still emit end of speech on error
             self._event_ch.send_nowait(
                 SpeechEvent(type=SpeechEventType.END_OF_SPEECH)

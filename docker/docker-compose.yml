@@ -24,6 +24,12 @@ services:
       - OPENAI_API_KEY=dummy-key
       # Options: Systran/faster-whisper-small (~500MB, fast), Systran/faster-whisper-medium (~1.5GB), deepdml/faster-whisper-large-v3-turbo-ct2 (~1.5GB, best quality+speed)
       - OPENAI_WHISPER_MODEL=${OPENAI_WHISPER_MODEL:-Systran/faster-whisper-small}
+      # LLM configuration (override to avoid llama.cpp hard-crashes on some GPUs)
+      # Tip: set LLM_GPU_LAYERS=-1 to try full GPU offload; set 0 for CPU-only.
+      # On smaller GPUs (e.g., 6GB), a partial offload is often more stable than -1.
+      - LLM_GPU_LAYERS=${LLM_GPU_LAYERS:-20}
+      - LLM_BATCH_SIZE=${LLM_BATCH_SIZE:-256}
+      - LLM_CONTEXT_SIZE=${LLM_CONTEXT_SIZE:-32768}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - REQUEST_ID_HEADER=${REQUEST_ID_HEADER:-X-Request-ID}
       - API_KEY_ENABLED=${API_KEY_ENABLED:-false}
@@ -44,6 +50,9 @@ services:
       # NOTE: This URL is returned to the browser. It must be reachable from the user's machine,
       # not just from within the Docker network.
       - LIVEKIT_URL=${LIVEKIT_URL:-ws://localhost:21254}
+      # LiveKit Server API URL (used by backend for administrative actions like kicking the agent).
+      # This must be reachable from within the Docker network.
+      - LIVEKIT_API_URL=${LIVEKIT_API_URL:-http://livekit:7880}
       - LIVEKIT_API_KEY=${LIVEKIT_API_KEY:-devkey}
       # Use a sufficiently long default secret for local dev.
       - LIVEKIT_API_SECRET=${LIVEKIT_API_SECRET:-devsecretdevsecretdevsecretdevsecret}
@@ -66,7 +75,9 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 300s
+      # Cold-start model loads can take several minutes on first boot.
+      # Give the service enough time before declaring it unhealthy.
+      start_period: 1200s
 
   whisper_service:
     image: fedirz/faster-whisper-server:latest-cuda
@@ -151,7 +162,7 @@ services:
       - "7881:7881"    # RTC over TCP
       - "7882:7882/udp"  # RTC over UDP
       # UDP port range for ICE candidates (must match rtc.port_range_* in livekit.yaml)
-      - "50000-50100:50000-50100/udp"
+      - "40000-40100:40000-40100/udp"
     healthcheck:
       test: [ "CMD", "wget", "-q", "--spider", "http://localhost:7880" ]
       interval: 30s
@@ -179,6 +190,13 @@ services:
       - ~/.cache/huggingface:/home/appuser/.cache/huggingface
       - ~/.cache/whisper:/home/appuser/.cache/whisper
     environment:
+      # Prevent GPU contention/OOM: worker should not load the GGUF model locally.
+      - AGENT_LLM_MODE=remote
+      - AGENT_LLM_API_BASE_URL=http://gemma_service:6666
+      - AGENT_LLM_API_KEY_HEADER=${API_KEY_HEADER_NAME:-X-API-Key}
+      - AGENT_LLM_API_KEY=${VITE_API_KEY:-}
+      # Make GPU invisible to the worker (Gemma runs in gemma_service).
+      - NVIDIA_VISIBLE_DEVICES=none
       - HUGGING_FACE_HUB_TOKEN=${HUGGING_FACE_HUB_TOKEN:-}
       - ENABLE_FASTER_WHISPER=false
       - OPENAI_API_BASE=http://whisper_service:8000/v1
@@ -198,6 +216,10 @@ services:
       - LIVEKIT_API_KEY=${LIVEKIT_API_KEY:-devkey}
       - LIVEKIT_API_SECRET=${LIVEKIT_API_SECRET:-devsecretdevsecretdevsecretdevsecret}
       - LIVEKIT_ROOM_NAME=${LIVEKIT_ROOM_NAME:-gemma-voice-room}
+      # Internal webhook for worker -> backend status events
+      - AGENT_STATUS_WEBHOOK_URL=${AGENT_STATUS_WEBHOOK_URL:-http://gemma_service:6666/v1/livekit/agent/events}
+      - AGENT_STATUS_WEBHOOK_API_KEY_HEADER=${API_KEY_HEADER_NAME:-X-API-Key}
+      - AGENT_STATUS_WEBHOOK_API_KEY=${VITE_API_KEY:-}
     depends_on:
       openaudio_api:
         condition: service_healthy

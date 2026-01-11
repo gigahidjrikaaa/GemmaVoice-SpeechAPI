@@ -89,19 +89,26 @@ async def create_sse_response(
     async def event_stream() -> AsyncGenerator[str, None]:
         """Wrap generator with disconnect detection."""
         try:
+            # Send an initial SSE comment to flush headers immediately.
+            # Some proxies/clients won't consider the stream established until the
+            # first bytes are received.
+            yield ":ok\n\n"
             async for chunk in generator:
                 if await request.is_disconnected():
                     logger.info("Client disconnected, stopping stream")
                     break
                 yield chunk
         except asyncio.CancelledError:
+            # Cancellation is expected for SSE (client disconnect, upstream task cancel).
+            # Avoid re-raising here; bubbling cancellation can close the socket abruptly
+            # and cause clients to see protocol/read errors.
             logger.info("Stream cancelled")
-            raise
+            return
         except Exception as exc:
             logger.exception("Error in SSE stream")
             # Send error event before closing
             yield SSEFormatter.format_error(str(exc), "STREAM_ERROR")
-            raise
+            return
 
     return StreamingResponse(
         event_stream(),
@@ -181,7 +188,9 @@ async def create_token_stream(
     except Exception as exc:
         logger.exception("Error in token stream conversion")
         yield SSEFormatter.format_error(str(exc), "STREAM_ERROR")
-        raise
+        # End the SSE stream cleanly after emitting the error event.
+        yield SSEFormatter.format_done()
+        return
 
 
 class StreamBuffer:

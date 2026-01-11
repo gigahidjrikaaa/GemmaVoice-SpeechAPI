@@ -32,6 +32,7 @@ from livekit.agents.utils import is_given
 
 from app.services.openaudio import OpenAudioService
 from app.config.settings import get_settings
+from app.agents import telemetry
 
 logger = logging.getLogger(__name__)
 
@@ -248,6 +249,17 @@ class OpenAudioChunkedStream(ChunkedStream):
         )
         
         try:
+            await telemetry.emit(
+                "TTS_START",
+                data={
+                    "provider": self._tts.provider,
+                    "model": self._tts.model,
+                    "request_id": self._request_id,
+                    "mode": "non_streaming",
+                    "text_len": len(self._input_text),
+                    "reference_id": self._opts.reference_id,
+                },
+            )
             # Call the OpenAudio service
             result = await self._openaudio_service.synthesize(
                 text=self._input_text,
@@ -290,9 +302,24 @@ class OpenAudioChunkedStream(ChunkedStream):
                 "OpenAudioChunkedStream completed: %d bytes",
                 len(result.audio),
             )
+
+            await telemetry.emit(
+                "TTS_DONE",
+                data={
+                    "request_id": self._request_id,
+                    "bytes": len(result.audio),
+                    "sample_rate": result.sample_rate,
+                    "media_type": result.media_type,
+                },
+            )
             
         except Exception as e:
             logger.exception("OpenAudioChunkedStream synthesis failed")
+            await telemetry.emit(
+                "TTS_ERROR",
+                message=str(e),
+                data={"request_id": self._request_id, "provider": self._tts.provider, "model": self._tts.model},
+            )
             raise
 
 
@@ -343,6 +370,17 @@ class OpenAudioSynthesizeStream(SynthesizeStream):
         )
         
         try:
+            await telemetry.emit(
+                "TTS_SEGMENT_START",
+                data={
+                    "provider": self._tts.provider,
+                    "model": self._tts.model,
+                    "request_id": self._request_id,
+                    "mode": "streaming",
+                    "text_len": len(text),
+                    "reference_id": self._opts.reference_id,
+                },
+            )
             # Get streaming synthesis from OpenAudio
             stream_result = await self._openaudio_service.synthesize_stream(
                 text=text,
@@ -401,7 +439,21 @@ class OpenAudioSynthesizeStream(SynthesizeStream):
             output_emitter.end_segment()
             
             logger.debug("OpenAudioSynthesizeStream segment completed")
+
+            await telemetry.emit(
+                "TTS_SEGMENT_DONE",
+                data={
+                    "request_id": self._request_id,
+                    "sample_rate": stream_result.sample_rate,
+                    "media_type": stream_result.media_type,
+                },
+            )
             
         except Exception as e:
             logger.exception("OpenAudioSynthesizeStream synthesis failed")
+            await telemetry.emit(
+                "TTS_ERROR",
+                message=str(e),
+                data={"request_id": self._request_id, "provider": self._tts.provider, "model": self._tts.model},
+            )
             raise

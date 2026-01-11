@@ -105,6 +105,7 @@ class Settings(BaseSettings):
     )
     llm_gpu_layers: int = Field(
         default=-1,
+        alias="LLM_GPU_LAYERS",
         description="Number of model layers to place on the GPU (-1 uses all available layers).",
     )
     llm_batch_size: PositiveInt = Field(
@@ -241,6 +242,14 @@ class Settings(BaseSettings):
         alias="LIVEKIT_API_SECRET",
         description="API secret for LiveKit token generation.",
     )
+    livekit_api_url: Optional[str] = Field(
+        default=None,
+        alias="LIVEKIT_API_URL",
+        description=(
+            "HTTP base URL for LiveKit Server API calls from this service "
+            "(e.g. http://livekit:7880 inside Docker, or http://localhost:21254 on the host)."
+        ),
+    )
     livekit_room_name: str = Field(
         default="gemma-voice-room",
         alias="LIVEKIT_ROOM_NAME",
@@ -272,6 +281,7 @@ class Settings(BaseSettings):
         "livekit_url",
         "livekit_api_key",
         "livekit_api_secret",
+        "livekit_api_url",
         mode="before",
     )
     @classmethod

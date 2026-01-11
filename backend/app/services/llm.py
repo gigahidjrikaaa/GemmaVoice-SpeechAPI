@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+import threading
 from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator, Dict, Optional
 
@@ -238,37 +239,40 @@ class LLMService:
         
         Wraps the synchronous llama.cpp stream in an async iterator.
         """
-        loop = asyncio.get_event_loop()
-        
-        # Run the streaming generation in a thread pool
-        def _sync_stream():
+        if self._llm is None:
+            raise ModelNotLoadedError("LLM model is not loaded")
+
+        # IMPORTANT: llama.cpp streaming generators are not safe to advance across threads.
+        # The prior implementation created the generator in one thread and advanced it in
+        # other threads, which can lead to crashes and abrupt connection closes.
+        loop = asyncio.get_running_loop()
+        queue: asyncio.Queue[object] = asyncio.Queue()
+        stop_event = threading.Event()
+
+        def _producer() -> None:
             try:
                 for chunk in self._llm(prompt, **kwargs):
-                    yield chunk
-            except GeneratorExit:
-                logger.debug("Stream generator closed")
-                return
+                    if stop_event.is_set():
+                        break
+                    loop.call_soon_threadsafe(queue.put_nowait, chunk)
+            except Exception as exc:  # noqa: BLE001
+                loop.call_soon_threadsafe(queue.put_nowait, exc)
+            finally:
+                loop.call_soon_threadsafe(queue.put_nowait, None)
 
-        # Create the generator in thread pool
-        stream_gen = await asyncio.to_thread(_sync_stream)
-        
-        # Yield chunks asynchronously
+        producer_thread = threading.Thread(target=_producer, daemon=True)
+        producer_thread.start()
+
         try:
             while True:
-                try:
-                    # Get next chunk from thread pool
-                    chunk = await asyncio.to_thread(next, stream_gen, None)
-                    if chunk is None:
-                        break
-                    yield chunk
-                except StopIteration:
+                item = await queue.get()
+                if item is None:
                     break
+                if isinstance(item, Exception):
+                    raise item
+                yield item  # type: ignore[misc]
         finally:
-            # Ensure generator is closed
-            try:
-                await asyncio.to_thread(stream_gen.close)
-            except Exception:
-                pass
+            stop_event.set()
 
     @asynccontextmanager
     async def generation_context(self, **kwargs: Any):

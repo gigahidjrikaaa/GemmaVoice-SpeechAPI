@@ -99,8 +99,8 @@ function AppShell() {
       <main className="flex-1 flex flex-col min-w-0 bg-slate-950/50">
         {/* Mobile/Tablet Header (if needed in future, currently hidden for desktop-first) */}
         
-        <div className="flex-1 overflow-hidden flex relative">
-          <div className="flex-1 overflow-y-auto scroll-smooth">
+        <div className="flex-1 overflow-hidden flex">
+          <div className="flex-1 overflow-y-auto scroll-smooth min-w-0">
             <div className="max-w-7xl mx-auto p-8">
               <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
                 <ActiveComponent />
@@ -110,8 +110,10 @@ function AppShell() {
 
           {/* Code Viewer Sidebar (Overlay or Push) */}
           <div
-            className={`border-l border-slate-800 bg-slate-950 shadow-2xl transition-all duration-300 ease-in-out flex flex-col absolute right-0 top-0 bottom-0 z-20 ${
-              showCode ? "w-[450px] translate-x-0" : "w-0 translate-x-full opacity-0"
+            className={`bg-slate-950 shadow-2xl transition-all duration-300 ease-in-out flex flex-col shrink-0 overflow-hidden ${
+              showCode
+                ? "w-[450px] opacity-100 border-l border-slate-800"
+                : "w-0 opacity-0 pointer-events-none border-l-0"
             }`}
           >
             <div className="p-4 border-b border-slate-800 bg-slate-900/50 flex items-center justify-between">

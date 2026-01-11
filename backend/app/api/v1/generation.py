@@ -30,6 +30,7 @@ from app.utils.streaming import (
 from app.utils.exceptions import (
     GenerationError,
     ModelNotLoadedError,
+    StreamCancelledError,
     ValidationError,
 )
 
@@ -181,9 +182,14 @@ async def generate_text_stream(
                 yield sse_event
                 
         except asyncio.CancelledError:
-            logger.info("SSE stream cancelled by client")
+            # Normal when the client disconnects or upstream cancels the request.
+            logger.info("SSE stream cancelled")
+            return
+        except StreamCancelledError:
+            # Raised by LLMService when the stream is cancelled.
+            logger.info("LLM stream cancelled")
             yield SSEFormatter.format_error("Stream cancelled", "STREAM_CANCELLED")
-            raise
+            return
         except ModelNotLoadedError:
             logger.error("Model not loaded during streaming")
             yield SSEFormatter.format_error("Model is not loaded", "MODEL_NOT_LOADED")
