@@ -2,8 +2,8 @@ FROM node:20-bullseye as build
 
 WORKDIR /app
 
-COPY package*.json ./
-RUN npm install --legacy-peer-deps
+COPY package.json package-lock.json ./
+RUN npm ci && npm cache clean --force
 
 COPY . .
 

@@ -184,7 +184,7 @@ class TestTextToSpeechEndpoint:
         assert response.status_code == 200
 
     def test_tts_streaming_mode(self, test_client: TestClient) -> None:
-        """Streaming mode returns audio stream."""
+        """Streaming mode returns SSE with base64 audio chunks."""
         response = test_client.post(
             "/v1/text-to-speech",
             json={
@@ -194,9 +194,18 @@ class TestTextToSpeechEndpoint:
         )
         
         assert response.status_code == 200
-        # Streaming returns binary audio
         content_type = response.headers.get("content-type", "")
-        assert "audio" in content_type or "octet-stream" in content_type
+        assert "text/event-stream" in content_type
+        assert response.headers.get("x-audio-format")
+        assert response.headers.get("x-sample-rate")
+
+        # Basic SSE framing checks
+        body = response.text
+        assert "event: audio_chunk" in body
+        assert "event: done" in body
+
+        # Ensure at least one expected chunk made it through (MockOpenAudioService yields audio-chunk-1)
+        assert "YXVkaW8tY2h1bmstMQ==" in body
 
 
 # ============================================================================

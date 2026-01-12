@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback, ChangeEvent, FormEvent } from "react";
+import { useMemo, useState, useRef, useEffect, useCallback, ChangeEvent, FormEvent } from "react";
 import { 
     Mic, 
     Square, 
@@ -54,12 +54,15 @@ const PARAM_HELP = {
     stream_audio: "If enabled, audio chunks will be played as they arrive (lower latency)."
 };
 
-const FAQ_ITEMS: FAQItem[] = [
+const FAQ_ITEMS_LIVEKIT: FAQItem[] = [
     {
-        question: "What is the difference between WebSocket and LiveKit?",
-        answer: "WebSocket is a direct connection to the backend, suitable for simple 1-on-1 conversations. LiveKit is a WebRTC-based SFU (Selective Forwarding Unit) that handles real-time audio/video routing, better for production and scaling.",
-        category: "Architecture"
-    },
+        question: "Can I interrupt the AI?",
+        answer: "Yes. Interruption handling is built into the real-time session.",
+        category: "Usage"
+    }
+];
+
+const FAQ_ITEMS_WEBSOCKET: FAQItem[] = [
     {
         question: "How does VAD work?",
         answer: "VAD (Voice Activity Detection) runs locally in your browser using an ONNX model. It detects when you are speaking and automatically sends audio to the server, so you don't have to press a button.",
@@ -67,7 +70,7 @@ const FAQ_ITEMS: FAQItem[] = [
     },
     {
         question: "Can I interrupt the AI?",
-        answer: "In LiveKit mode, interruption handling is built-in. In WebSocket mode, the system is currently half-duplex (turn-based), so it's best to wait for the AI to finish.",
+        answer: "Not reliably. The system is currently half-duplex (turn-based), so it works best if you wait for the AI to finish responding.",
         category: "Usage"
     }
 ];
@@ -96,12 +99,36 @@ const base64ToBlob = (base64: string, type: string = 'audio/wav'): Blob => {
     return new Blob([byteArray], { type });
 };
 
-export function VoiceChatPanel() {
+export type VoiceChatPanelVariant = "combined" | "livekit" | "websocket";
+
+export interface VoiceChatPanelProps {
+    /**
+     * - "combined": current UI (user can choose between LiveKit and WebSocket)
+     * - "livekit": LiveKit-only page
+     * - "websocket": WebSocket-only page
+     */
+    variant?: VoiceChatPanelVariant;
+}
+
+export function VoiceChatPanel({ variant = "combined" }: VoiceChatPanelProps) {
     const { config } = useClientConfig();
     const { push } = useToast();
+
+    const isCombined = variant === "combined";
+    const forcedConnectionMode = variant === "combined" ? null : variant;
     
     // --- State ---
-    const [connectionMode, setConnectionMode] = useState<"websocket" | "livekit">("websocket");
+    const [connectionModeState, setConnectionModeState] = useState<"websocket" | "livekit">(
+        forcedConnectionMode ?? "websocket"
+    );
+    const connectionMode = forcedConnectionMode ?? connectionModeState;
+    const setConnectionMode = useCallback(
+        (nextMode: "websocket" | "livekit") => {
+            if (!isCombined) return;
+            setConnectionModeState(nextMode);
+        },
+        [isCombined]
+    );
     const [activeMode, setActiveMode] = useState<"live" | "file">("live");
     const [inputMode, setInputMode] = useState<"vad" | "push">("vad");
     
@@ -632,21 +659,71 @@ export function VoiceChatPanel() {
         }
     };
 
+    const instructionsCopy = useMemo(() => {
+        if (variant === "livekit") {
+            return {
+                title: "🎙️ Voice Chat (LiveKit)",
+                description: "Real-time voice chat using LiveKit.",
+                steps: [
+                    { step: 1, title: "Join Session", description: "Connect to a LiveKit room." },
+                    { step: 2, title: "Talk", description: "Speak naturally; interruption support is built-in." },
+                    { step: 3, title: "Listen", description: "Hear the AI response in real-time." }
+                ],
+                tips: [
+                    "Best for natural, low-latency conversation.",
+                    "Instructions set the agent persona.",
+                    "Check the Developer Console for LiveKit events."
+                ]
+            };
+        }
+
+        if (variant === "websocket") {
+            return {
+                title: "🎙️ Voice Chat (WebSocket)",
+                description: "Turn-based voice chat over a WebSocket connection.",
+                steps: [
+                    { step: 1, title: "Connect", description: "Open a WebSocket session to the backend." },
+                    { step: 2, title: "Speak", description: "Use VAD (auto) or push-to-talk." },
+                    { step: 3, title: "Wait for Reply", description: "The AI responds after you finish speaking." }
+                ],
+                tips: [
+                    "Half-duplex: avoid interrupting mid-response.",
+                    "VAD runs locally in your browser.",
+                    "Check the Developer Console for WS events."
+                ]
+            };
+        }
+
+        return {
+            title: "🎙️ Voice Chat",
+            description: "Interact with Gemma 3 using your voice. Choose between Real-time (LiveKit) or Turn-based (WebSocket).",
+            steps: [
+                { step: 1, title: "Select Connection", description: "Pick LiveKit for real-time talk, or WebSocket for turn-based voice." },
+                { step: 2, title: "Provide Input", description: "Speak into your microphone (turn-based) or join a room (real-time)." },
+                { step: 3, title: "Get Response", description: "Hear the AI response and see status/logs in the console." }
+            ],
+            tips: [
+                "Use LiveKit for the most natural live conversation.",
+                "Use WebSocket when you want turn-based, API-like interactions.",
+                "Instructions apply to both modes to set the persona."
+            ]
+        };
+    }, [variant]);
+
+    const faqItems = useMemo<FAQItem[]>(() => {
+        if (variant === "livekit") return FAQ_ITEMS_LIVEKIT;
+        if (variant === "websocket") return FAQ_ITEMS_WEBSOCKET;
+        // Combined mode is not a default page anymore; keep FAQ generic.
+        return [...FAQ_ITEMS_WEBSOCKET, ...FAQ_ITEMS_LIVEKIT];
+    }, [variant]);
+
     return (
         <div className="flex flex-col gap-6 h-full">
             <InstructionsPanel
-                title="🎙️ Voice Chat"
-                description="Interact with Gemma 3 using your voice. Choose between Real-time (LiveKit) or Turn-based (WebSocket)."
-                steps={[
-                    { step: 1, title: "Select Connection", description: "Pick LiveKit for real-time talk, or WebSocket for turn-based voice." },
-                    { step: 2, title: "Provide Input", description: "Speak into your microphone (turn-based) or join a room (real-time)." },
-                    { step: 3, title: "Get Response", description: "Hear the AI response and see status/logs in the console." }
-                ]}
-                tips={[
-                    "Use LiveKit for the most natural live conversation.",
-                    "Use WebSocket when you want turn-based, API-like interactions.",
-                    "Instructions apply to both modes to set the persona."
-                ]}
+                title={instructionsCopy.title}
+                description={instructionsCopy.description}
+                steps={instructionsCopy.steps}
+                tips={instructionsCopy.tips}
             />
 
             {/** Switching connection modes should cleanly stop the other mode. */}
@@ -654,65 +731,67 @@ export function VoiceChatPanel() {
             {/** WebSocket mode uses a shared connection; we must stop it explicitly on mode switch. */}
             <div className="sr-only" aria-live="polite" />
 
-            {/* Connection Mode Selector (Separated) */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                <button
-                    type="button"
-                    aria-pressed={connectionMode === "livekit"}
-                    onClick={() => {
-                        if (connectionMode === "websocket" && isConnected) stopConversation();
-                        setConnectionMode("livekit");
-                    }}
-                    className={`text-left rounded-xl border p-4 transition-all ${
-                        connectionMode === "livekit"
-                            ? "border-purple-500/40 bg-slate-900/60 ring-1 ring-purple-500/20"
-                            : "border-slate-800 bg-slate-900/30 hover:bg-slate-900/50"
-                    }`}
-                >
-                    <div className="flex items-start justify-between gap-4">
-                        <div className="min-w-0">
-                            <div className="flex items-center gap-2">
-                                <Server className={`h-4 w-4 ${connectionMode === "livekit" ? "text-purple-400" : "text-slate-500"}`} />
-                                <h3 className="text-sm font-semibold text-slate-200">Real-time (LiveKit)</h3>
+            {/* Connection Mode Selector (Combined page only) */}
+            {isCombined ? (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <button
+                        type="button"
+                        aria-pressed={connectionMode === "livekit"}
+                        onClick={() => {
+                            if (connectionMode === "websocket" && isConnected) stopConversation();
+                            setConnectionMode("livekit");
+                        }}
+                        className={`text-left rounded-xl border p-4 transition-all ${
+                            connectionMode === "livekit"
+                                ? "border-purple-500/40 bg-slate-900/60 ring-1 ring-purple-500/20"
+                                : "border-slate-800 bg-slate-900/30 hover:bg-slate-900/50"
+                        }`}
+                    >
+                        <div className="flex items-start justify-between gap-4">
+                            <div className="min-w-0">
+                                <div className="flex items-center gap-2">
+                                    <Server className={`h-4 w-4 ${connectionMode === "livekit" ? "text-purple-400" : "text-slate-500"}`} />
+                                    <h3 className="text-sm font-semibold text-slate-200">Real-time (LiveKit)</h3>
+                                </div>
+                                <p className="mt-1 text-xs text-slate-400">
+                                    Live talk with interruption support and low latency.
+                                </p>
                             </div>
-                            <p className="mt-1 text-xs text-slate-400">
-                                Live talk with interruption support and low latency.
-                            </p>
+                            {connectionMode === "livekit" ? (
+                                <CheckCircle2 className="h-4 w-4 text-purple-400 shrink-0" />
+                            ) : null}
                         </div>
-                        {connectionMode === "livekit" ? (
-                            <CheckCircle2 className="h-4 w-4 text-purple-400 shrink-0" />
-                        ) : null}
-                    </div>
-                </button>
+                    </button>
 
-                <button
-                    type="button"
-                    aria-pressed={connectionMode === "websocket"}
-                    onClick={() => {
-                        setConnectionMode("websocket");
-                    }}
-                    className={`text-left rounded-xl border p-4 transition-all ${
-                        connectionMode === "websocket"
-                            ? "border-blue-500/40 bg-slate-900/60 ring-1 ring-blue-500/20"
-                            : "border-slate-800 bg-slate-900/30 hover:bg-slate-900/50"
-                    }`}
-                >
-                    <div className="flex items-start justify-between gap-4">
-                        <div className="min-w-0">
-                            <div className="flex items-center gap-2">
-                                <Wifi className={`h-4 w-4 ${connectionMode === "websocket" ? "text-blue-400" : "text-slate-500"}`} />
-                                <h3 className="text-sm font-semibold text-slate-200">Turn-based (WebSocket)</h3>
+                    <button
+                        type="button"
+                        aria-pressed={connectionMode === "websocket"}
+                        onClick={() => {
+                            setConnectionMode("websocket");
+                        }}
+                        className={`text-left rounded-xl border p-4 transition-all ${
+                            connectionMode === "websocket"
+                                ? "border-blue-500/40 bg-slate-900/60 ring-1 ring-blue-500/20"
+                                : "border-slate-800 bg-slate-900/30 hover:bg-slate-900/50"
+                        }`}
+                    >
+                        <div className="flex items-start justify-between gap-4">
+                            <div className="min-w-0">
+                                <div className="flex items-center gap-2">
+                                    <Wifi className={`h-4 w-4 ${connectionMode === "websocket" ? "text-blue-400" : "text-slate-500"}`} />
+                                    <h3 className="text-sm font-semibold text-slate-200">Turn-based (WebSocket)</h3>
+                                </div>
+                                <p className="mt-1 text-xs text-slate-400">
+                                    Half-duplex voice: you speak, then the AI responds.
+                                </p>
                             </div>
-                            <p className="mt-1 text-xs text-slate-400">
-                                Half-duplex voice: you speak, then the AI responds.
-                            </p>
+                            {connectionMode === "websocket" ? (
+                                <CheckCircle2 className="h-4 w-4 text-blue-400 shrink-0" />
+                            ) : null}
                         </div>
-                        {connectionMode === "websocket" ? (
-                            <CheckCircle2 className="h-4 w-4 text-blue-400 shrink-0" />
-                        ) : null}
-                    </div>
-                </button>
-            </div>
+                    </button>
+                </div>
+            ) : null}
 
             <div className="rounded-xl border border-slate-800 bg-slate-900/30 p-4">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -1138,11 +1217,13 @@ export function VoiceChatPanel() {
                 </div>
             )}
 
-            <FAQSection
-                title="❓ Voice Chat FAQ"
-                description="Common questions about voice-based conversation with Gemma 3"
-                items={FAQ_ITEMS}
-            />
+            {faqItems.length ? (
+                <FAQSection
+                    title="❓ Voice Chat FAQ"
+                    description="Common questions about voice-based conversation with Gemma 3"
+                    items={faqItems}
+                />
+            ) : null}
         </div>
     );
 }

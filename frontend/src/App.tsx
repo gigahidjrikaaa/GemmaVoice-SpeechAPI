@@ -8,7 +8,8 @@ import { CodeProvider, useCode } from "./context/CodeContext";
 import { GenerationPanel } from "./components/GenerationPanel";
 import { SynthesisPanel } from "./components/SynthesisPanel";
 import { TranscriptionPanel } from "./components/TranscriptionPanel";
-import { VoiceChatPanel } from "./components/VoiceChatPanel";
+import { VoiceChatLiveKitPanel } from "./components/VoiceChatLiveKitPanel";
+import { VoiceChatWebSocketPanel } from "./components/VoiceChatWebSocketPanel";
 import { AboutPanel } from "./components/AboutPanel";
 import { ToastProvider } from "./components/Toast";
 import { CodeViewer } from "./components/CodeViewer";
@@ -21,6 +22,8 @@ import {
   Volume2, 
   Info, 
   Bot,
+  Server,
+  Wifi,
   Menu
 } from "lucide-react";
 
@@ -28,7 +31,8 @@ const tabs = [
   { id: "generate", label: "Text Generation", icon: MessageSquare, component: GenerationPanel },
   { id: "stt", label: "Speech to Text", icon: Mic, component: TranscriptionPanel },
   { id: "tts", label: "Text to Speech", icon: Volume2, component: SynthesisPanel },
-  { id: "voice-chat", label: "Voice Chat", icon: Bot, component: VoiceChatPanel },
+  { id: "voice-chat-websocket", label: "Voice Chat (WebSocket)", icon: Wifi, component: VoiceChatWebSocketPanel },
+  { id: "voice-chat-livekit", label: "Voice Chat (LiveKit)", icon: Server, component: VoiceChatLiveKitPanel },
   { id: "about", label: "About", icon: Info, component: AboutPanel }
 ];
 

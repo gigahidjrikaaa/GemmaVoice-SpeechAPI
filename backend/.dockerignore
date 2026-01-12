@@ -1,0 +1,33 @@
+# Backend build context ignores
+# Keeps docker build context small and avoids sending model checkpoints / caches.
+
+.git
+.gitignore
+
+__pycache__/
+**/__pycache__/
+.pytest_cache/
+**/.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+.venv/
+**/.venv/
+
+# Local logs and artifacts
+logs/
+*.log
+
+# Tests and docs are not needed for the runtime image
+tests/
+references/
+
+# Large model/checkpoint folders are mounted at runtime (do not bake into image)
+openaudio-checkpoints/
+
+# Repo root helpers
+README.md
+GPU_SETUP.md
+reproduce_issue.py
+test_connectivity.py
+test_deployment.py

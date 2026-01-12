@@ -7,7 +7,7 @@ from typing import Optional
 
 from fastapi import FastAPI
 from fastapi.responses import Response
-from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, generate_latest
+from prometheus_client import CONTENT_TYPE_LATEST, Counter, Gauge, Histogram, generate_latest
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +51,74 @@ _rate_limit_rejections = Counter(
     "Number of requests rejected by rate limiting",
     labelnames=("scope",),
 )
+
+
+# --- WebSocket / streaming metrics ---
+
+_ws_stt_stream_connections_total = Counter(
+    "app_ws_stt_stream_connections_total",
+    "Total number of STT streaming WebSocket connections",
+)
+_ws_stt_stream_active = Gauge(
+    "app_ws_stt_stream_active",
+    "Number of active STT streaming WebSocket connections",
+)
+_ws_stt_stream_audio_bytes_total = Counter(
+    "app_ws_stt_stream_audio_bytes_total",
+    "Total number of audio bytes received over the STT streaming WebSocket",
+)
+_ws_stt_stream_events_total = Counter(
+    "app_ws_stt_stream_events_total",
+    "Total number of STT streaming WebSocket events sent to clients",
+    labelnames=("event",),
+)
+_stt_stream_conversion_latency = Histogram(
+    "app_stt_stream_conversion_duration_seconds",
+    "Duration of WebM-to-WAV conversion during STT streaming",
+    labelnames=("result",),
+)
+_stt_stream_transcription_latency = Histogram(
+    "app_stt_stream_transcription_duration_seconds",
+    "Duration of Whisper transcription during STT streaming",
+    labelnames=("result",),
+)
+
+
+def record_ws_stt_stream_connection(*, opened: bool) -> None:
+    """Record lifecycle metrics for the STT streaming WebSocket."""
+
+    if opened:
+        _ws_stt_stream_connections_total.inc()
+        _ws_stt_stream_active.inc()
+    else:
+        _ws_stt_stream_active.dec()
+
+
+def record_ws_stt_stream_audio_bytes(byte_count: int) -> None:
+    """Accumulate total audio bytes received from streaming clients."""
+
+    if byte_count > 0:
+        _ws_stt_stream_audio_bytes_total.inc(byte_count)
+
+
+def record_ws_stt_stream_event(event: str) -> None:
+    """Count outbound STT streaming events by type (e.g., interim/final/error)."""
+
+    if not event:
+        event = "unknown"
+    _ws_stt_stream_events_total.labels(event=event).inc()
+
+
+def record_stt_stream_conversion(duration_seconds: float, *, success: bool) -> None:
+    _stt_stream_conversion_latency.labels(result="success" if success else "error").observe(
+        duration_seconds
+    )
+
+
+def record_stt_stream_transcription(duration_seconds: float, *, success: bool) -> None:
+    _stt_stream_transcription_latency.labels(result="success" if success else "error").observe(
+        duration_seconds
+    )
 
 
 def _normalise_route(route: Optional[str]) -> str:

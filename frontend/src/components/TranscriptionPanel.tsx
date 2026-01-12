@@ -109,7 +109,7 @@ export function TranscriptionPanel() {
   const [isLiveMode, setIsLiveMode] = useState(false);
   const [audioFile, setAudioFile] = useState<File | null>(null);
   const [recordingDuration, setRecordingDuration] = useState(0);
-  const [wsStatus, setWsStatus] = useState<"disconnected" | "connecting" | "connected">("disconnected");
+  const [wsStatus, setWsStatus] = useState<"disconnected" | "connecting" | "connected" | "finalizing">("disconnected");
   const [showGuide, setShowGuide] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
@@ -125,6 +125,7 @@ export function TranscriptionPanel() {
   const audioChunksRef = useRef<Blob[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const timerRef = useRef<number>();
+  const finalizeTimeoutRef = useRef<number>();
   const previewAudioRef = useRef<HTMLAudioElement | null>(null);
 
   const supportsSetSinkId =
@@ -155,6 +156,9 @@ export function TranscriptionPanel() {
       }
       if (timerRef.current) {
         clearInterval(timerRef.current);
+      }
+      if (finalizeTimeoutRef.current) {
+        clearTimeout(finalizeTimeoutRef.current);
       }
       mediaDevices?.removeEventListener?.("devicechange", refreshDevices);
     };
@@ -319,6 +323,15 @@ ws.send(JSON.stringify({ event: "stop" }));`;
             response_format: options.responseFormat,
             temperature: options.temperature
           }));
+
+          // Start recording only after WS is ready so we don't drop early chunks.
+          // For live streaming, send binary audio chunks directly.
+          mediaRecorder.ondataavailable = (event) => {
+            if (event.data.size > 0 && ws.readyState === WebSocket.OPEN) {
+              ws.send(event.data);
+            }
+          };
+          mediaRecorder.start(500);
         };
 
         ws.onmessage = (event) => {
@@ -337,6 +350,16 @@ ws.send(JSON.stringify({ event: "stop" }));`;
                 language: msg.data.language || prev?.language,
                 segments: [...(prev?.segments || []), ...(msg.data.segments || [])]
               }));
+
+              // If the user stopped recording, close out gracefully after final.
+              if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+                wsRef.current.close();
+              }
+              setWsStatus("disconnected");
+              if (finalizeTimeoutRef.current) {
+                clearTimeout(finalizeTimeoutRef.current);
+                finalizeTimeoutRef.current = undefined;
+              }
             } else if (msg.event === "ready") {
               push({ title: "Streaming ready", description: "Start speaking..." });
             } else if (msg.event === "configured") {
@@ -355,23 +378,17 @@ ws.send(JSON.stringify({ event: "stop" }));`;
           console.error("WebSocket error:", error);
           setWsStatus("disconnected");
           push({ title: "WebSocket error", description: "Connection failed", variant: "error" });
+          // Stop recording if streaming connection fails.
+          if (mediaRecorderRef.current?.state === "recording") {
+            mediaRecorderRef.current.stop();
+          }
         };
         
         ws.onclose = () => {
           setWsStatus("disconnected");
           console.log("WebSocket closed");
+          wsRef.current = null;
         };
-
-        // For live streaming, send binary audio chunks directly
-        mediaRecorder.ondataavailable = (event) => {
-          if (event.data.size > 0 && ws.readyState === WebSocket.OPEN) {
-            // Send raw binary audio data
-            ws.send(event.data);
-          }
-        };
-        
-        // Start recording with smaller intervals for real-time streaming
-        mediaRecorder.start(500); // Send chunks every 500ms for smoother streaming
       } else {
         mediaRecorder.ondataavailable = (event) => {
           if (event.data.size > 0) {
@@ -413,19 +430,25 @@ ws.send(JSON.stringify({ event: "stop" }));`;
       if (streamRef.current) {
         streamRef.current.getTracks().forEach(track => track.stop());
       }
-      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-        // Send stop event to finalize transcription
+      if (isLiveMode && wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+        setWsStatus("finalizing");
         wsRef.current.send(JSON.stringify({ event: "stop" }));
-        // Give it a moment to process final results before closing
-        setTimeout(() => {
+
+        // Fallback: close if no final arrives.
+        if (finalizeTimeoutRef.current) {
+          clearTimeout(finalizeTimeoutRef.current);
+        }
+        finalizeTimeoutRef.current = window.setTimeout(() => {
           if (wsRef.current) {
             wsRef.current.close();
             wsRef.current = null;
           }
-        }, 1000);
+          setWsStatus("disconnected");
+        }, 7000);
+      } else {
+        setInterimResult("");
+        setWsStatus("disconnected");
       }
-      setWsStatus("disconnected");
-      setInterimResult("");
       if (timerRef.current) {
         clearInterval(timerRef.current);
       }
@@ -602,9 +625,16 @@ ws.send(JSON.stringify({ event: "stop" }));`;
                       <span className={`ml-2 px-2 py-0.5 rounded text-xs ${
                         wsStatus === "connected" ? "bg-emerald-500/20 text-emerald-400" :
                         wsStatus === "connecting" ? "bg-yellow-500/20 text-yellow-400" :
+                        wsStatus === "finalizing" ? "bg-yellow-500/20 text-yellow-400" :
                         "bg-red-500/20 text-red-400"
                       }`}>
-                        {wsStatus === "connected" ? "⚡ Streaming" : wsStatus === "connecting" ? "Connecting..." : "Disconnected"}
+                        {wsStatus === "connected"
+                          ? "⚡ Streaming"
+                          : wsStatus === "connecting"
+                            ? "Connecting..."
+                            : wsStatus === "finalizing"
+                              ? "Finalizing..."
+                              : "Disconnected"}
                       </span>
                     )}
                   </div>
@@ -631,28 +661,36 @@ ws.send(JSON.stringify({ event: "stop" }));`;
 
               <button
                 onClick={toggleRecording}
+                disabled={wsStatus === "finalizing"}
                 className={`rounded-full px-8 py-4 font-bold text-sm transition-all flex items-center gap-3 shadow-lg ${isRecording
                   ? "bg-red-500 text-white hover:bg-red-600 hover:shadow-red-500/20"
                   : "bg-emerald-500 text-slate-950 hover:bg-emerald-400 hover:shadow-emerald-500/20"
-                  }`}
+                  } disabled:opacity-60 disabled:cursor-not-allowed`}
               >
                 {isRecording ? (
                   <>
                     <div className="h-3 w-3 rounded bg-white" />
                     Stop Recording
                   </>
+                ) : wsStatus === "finalizing" ? (
+                  <>
+                    <div className="h-4 w-4 rounded-full border-2 border-slate-950 border-t-transparent animate-spin" />
+                    Finalizing...
+                  </>
                 ) : (
                   <>
-              ) : recordingPreviewUrl ? (
-                <div className="w-full space-y-3">
-                  <audio ref={previewAudioRef} controls className="w-full" src={recordingPreviewUrl ?? undefined} />
-                  <p className="text-[10px] text-slate-500">Preview uses selected output device (if supported).</p>
-                </div>
                     <Mic className="h-5 w-5" />
                     Start Recording
                   </>
                 )}
               </button>
+
+              {!isRecording && !isLiveMode && recordingPreviewUrl ? (
+                <div className="w-full space-y-3">
+                  <audio ref={previewAudioRef} controls className="w-full" src={recordingPreviewUrl ?? undefined} />
+                  <p className="text-[10px] text-slate-500">Preview uses selected output device (if supported).</p>
+                </div>
+              ) : null}
             </div>
           </div>
 
